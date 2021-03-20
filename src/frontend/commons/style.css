@@ -1,0 +1,49 @@
+@font-face {
+    font-family: TwitterColorEmoji;
+    src: url("/static/fonts/TwitterColorEmoji.ttf");
+}
+
+:root {
+    --accent: #FF3C00;
+    --transparent: #00000000;
+}
+
+html {
+    height: 100%;
+    font-family: TwitterColorEmoji,Arial,Helvetica,Sans-Serif;
+    color: white;
+}
+
+input[type="text"], input[type="password"] {
+    background-color: var(--transparent);
+    color: white;
+    padding: 15px;
+    border: 2px solid var(--accent);
+    border-radius: 5px;
+    box-sizing: border-box;
+    width: 100%;
+    margin: 0;
+}
+
+.avatar {
+    position: relative;
+    margin-right: .5em;
+    width: 1.5em;
+    height: 1.5em;
+}
+.avatar div {
+    width: 100%;
+    height: 100%;
+    background-color: var(--accent);
+    border-radius: 100%;
+}
+.avatar span {
+    position: absolute;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    width: 100%;
+    margin: 0;
+}

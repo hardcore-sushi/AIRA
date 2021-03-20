@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>AIRA - Login</title>
+        <link rel="stylesheet" href="/static/commons/style.css">
+        <style>
+            body {
+                margin: 0;
+                height: 100%;
+                background-image: url("/static/imgs/wallpaper");
+                background-repeat: no-repeat;
+                background-position: center;
+                background-color: black;
+            }
+            main {
+                max-width: 500px;
+                background-color: #2B2F31;
+                border-radius: 10px;
+                position: absolute;
+                top: 20vh;
+                left: 0;
+                right: 0;
+                margin: auto;
+                padding-bottom: 20px;
+            }
+            h1, main>h3, #error_msg {
+                text-align: center;
+            }
+            h1 {
+                font-size: 3em;
+                margin-bottom: 0;
+            }
+            main>h3 {
+                font-style: italic;
+                color: #7E8183;
+            }
+            #error_msg {
+                font-size: 1.2em;
+                font-weight: bold;
+                margin-bottom: 0;
+            }
+            input[type="text"], input[type="password"] {
+                margin-bottom: 20px;
+            }
+            #create_page input[type="password"] {
+                display: none;
+            }
+            button {
+                background-color: #52585C;
+                color: white;
+                cursor: pointer;
+                padding: 15px 20%;
+                border: none;
+                border-radius: 8px;
+                display: block;
+                margin: auto;
+            }
+            button:hover {
+                background-color: var(--accent);
+            }
+            .action_page {
+                padding: 10px 50px;
+            }
+            .avatar {
+                width: 2em;
+                height: 2em;
+                font-size: 3em;
+                margin: auto;
+            }
+            #identity h2 {
+                text-align: center;
+            }
+            p {
+                color: red;
+            }
+            label.checkbox {
+                display: flex;
+                align-items: center;
+                cursor: pointer;
+                font-size: 1.1em;
+                margin-bottom: 1em;
+            }
+            input[type="checkbox"] {
+                display: none;
+            }
+            .checkmark {
+                position: relative;
+                height: 1.5em;
+                width: 1.5em;
+                border: 2px solid var(--accent);
+                margin-right: .5em;
+                border-radius: 5px;
+            }
+            .checkmark:after {
+                content: "";
+                position: absolute;
+                display: none;
+                left: .5em;
+                top: .3em;
+                width: .3em;
+                height: .6em;
+                border: solid white;
+                border-width: 0 3px 3px 0;
+                transform: rotate(45deg);
+            }
+            label.checkbox input:checked ~ .checkmark {
+                background-color: var(--accent);
+            }
+            label.checkbox input:checked ~ .checkmark:after {
+                display: block;
+            }
+        </style>
+    </head>
+    <body>
+        <main>
+            <h1>AIRA</h1>
+            <h3>Local network secure P2P communications</h3>
+            <p id="error_msg">ERROR_MSG</p>
+            <div id="login_page" class="action_page">
+                <h2>Login:</h2>
+                <form id="login_form" method="POST" action="/login">
+                    <div id="identity"></div>
+                    <input name="password" type="password" placeholder="Password">
+                    <button type="submit">Login</button>
+                </form>
+            </div>
+            <div id="create_page" class="action_page">
+                <h2>Create New Identity:</h2>
+                <form method="POST">
+                    <input type="text" name="name" placeholder="Name" required>
+                    <label class="checkbox">
+                        <input id="enable_password" type="checkbox">
+                        <span class="checkmark"></span>
+                        Encrypt with a password
+                    </label>
+                    <input type="password" name="password" placeholder="Password">
+                    <input type="password" name="password_confirm" placeholder="Password (Confirmation)">
+                    <button type="submit">Create</button>
+                </form>
+            </div>
+        </main>
+        <script src="/static/commons/script.js"></script>
+        <script>
+            let identity_name = IDENTITY_NAME;
+            if (identity_name == null) {
+                document.getElementById("login_page").style.display = "none";
+                let enable_password = document.getElementById("enable_password");
+                enable_password.onchange = function() {
+                    document.querySelectorAll("#create_page input[type=\"password\"]").forEach(function(i) {
+                        if (enable_password.checked) {
+                            i.style.display = "block";
+                        } else {
+                            i.style.display = "none";
+                        }
+                    });
+                }
+            } else {
+                let identity = document.getElementById("identity");
+                identity.appendChild(generate_avatar(identity_name));
+                let h2 = document.createElement("h2");
+                h2.textContent = identity_name;
+                identity.appendChild(h2);
+                document.getElementById("create_page").style.display = "none";
+            }
+        </script>
+    </body>
+</html>
