@@ -94,6 +94,12 @@ impl SessionManager {
         }
     }
 
+    fn remove_session(&self, session_id: &usize) {
+        self.sessions.write().unwrap().remove(session_id);
+        self.saved_msgs.lock().unwrap().remove(session_id);
+        self.not_seen.write().unwrap().retain(|x| x != session_id);
+    }
+
     fn handle_new_session(session_manager: Arc<SessionManager>, mut session: Session, outgoing: bool) {
         tokio::spawn(async move {
             let mut peer_public_key = [0; PUBLIC_KEY_LENGTH];
@@ -131,12 +137,12 @@ impl SessionManager {
                     let mut sessions = session_manager.sessions.write().unwrap();
                     let mut is_new_session = true;
                     for (_, registered_session) in sessions.iter() {
-                        if registered_session.1 == peer_public_key { //already connected with a different addr
+                        if registered_session.1 == peer_public_key { //already connected to this identity
                             is_new_session = false;
                             break;
                         }
                     }
-                    if is_new_session {
+                    if is_new_session && session_manager.is_identity_loaded() { //check if we didn't logged out during the handshake
                         let (sender, receiver) = mpsc::channel(32);
                         let mut session_id = None;
                         for (i, contact) in session_manager.loaded_contacts.read().unwrap().iter() {
@@ -144,6 +150,7 @@ impl SessionManager {
                                 sessions.insert(*i, (outgoing, peer_public_key, sender.clone()));
                                 is_contact = true;
                                 session_id = Some(*i);
+                                break;
                             }
                         }
                         if session_id.is_none() { //if not a contact, increment the session_counter
@@ -169,6 +176,7 @@ impl SessionManager {
                             Ok(_) => {}
                             Err(e) => {
                                 print_error!(e);
+                                session_manager.remove_session(&session_id);
                                 return;
                             }
                         }
@@ -268,9 +276,7 @@ impl SessionManager {
                             }
                         }
                     }
-                    session_manager.sessions.write().unwrap().remove(&session_id);
-                    session_manager.saved_msgs.lock().unwrap().remove(&session_id);
-                    session_manager.not_seen.write().unwrap().retain(|x| *x != session_id);
+                    session_manager.remove_session(&session_id);
                 }
             }
         });

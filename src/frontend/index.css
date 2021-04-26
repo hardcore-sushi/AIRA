@@ -1,0 +1,329 @@
+body {
+    margin: 0;
+    height: 100%;
+}
+main {
+    display: grid;
+    grid-template-columns: 25% auto;
+    height: 100%;
+}
+.panel {
+    padding-left: 20px;
+    padding-right: 20px;
+    display: flex;
+    flex-direction: column;
+}
+ul {
+    list-style-type: none;
+    padding: 0;
+    margin: 0;
+}
+button {
+    background-color: var(--transparent);
+    border: none;
+    cursor: pointer;
+}
+button::after {
+    background-color: #52585C;
+    border-radius: 100%;
+    display: block;
+    width: 20px;
+    height: 20px;
+    padding: 8px;
+}
+button:hover::after {
+    background-color: var(--accent);
+}
+input[type="file"] {
+    display: none;
+}
+.file_picker {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+}
+.file_picker::after {
+    content: url("/static/imgs/icons/attach/FF3C00");
+    width: 2em;
+}
+.popup {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    left: 0;
+    right: 0;
+    margin: auto;
+    width: 40%;
+    box-sizing: border-box;
+    padding: 20px 70px;
+    background-color: #2B2F31;
+    border-radius: 10px;
+    font-size: 1.3em;
+}
+.popup_background {
+    height: 100%;
+    width: 100%;
+    position: absolute;
+    background-color: rgba(0, 0, 0, .5);
+    z-index: 2;
+}
+.popup .close {
+    background-color: unset;
+    position: absolute;
+    right: 0;
+    top: 6px;
+}
+.popup .close:hover {
+    background-color: unset;
+}
+.popup .close::after {
+    content: url("/static/imgs/icons/cancel");
+    background-color: unset;
+}
+.popup .avatar {
+    font-size: 4em;
+    margin: auto;
+}
+.popup>div>div, .popup>div>button {
+    font-weight: bold;
+    display: block;
+    margin-bottom: 1em;
+}
+.popup input {
+    display: block;
+    margin: 10px;
+}
+.popup button {
+    background-color: #52585C;
+    color: white;
+    cursor: pointer;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-weight: bold;
+}
+.popup button:hover {
+    background-color: var(--accent);
+}
+.popup>div>div p {
+    font-weight: normal;
+    font-size: 0.9em;
+}
+.popup h2::before {
+    content: url("/static/imgs/icons/warning/FF3C00");
+    width: 9%;
+    display: inline-block;
+    vertical-align: middle;
+}
+.section_title {
+    margin-left: 8px;
+    font-weight: bold;
+    opacity: 0.5;
+}
+.section_title:first-of-type {
+    margin-top: 25px;
+}
+#left_panel {
+    background-color: #1D2228;
+}
+#right_panel {
+    background-color: #15191E;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+#me {
+    border-bottom: 2px solid var(--accent);
+    padding: 10px;
+    display: flex;
+    align-items: center;
+    font-size: 1.7em;
+    cursor: pointer;
+}
+#me>div {
+    display: flex;
+    align-items: center;
+    flex-grow: 1;
+}
+#me p {
+    margin: 0;
+    font-weight: bold;
+    display: inline;
+}
+#left_panel ul:last-of-type, #msg_log {
+    flex-grow: 1;
+}
+#left_panel ul li {
+    font-size: 1.1em;
+    padding: 15px;
+    height: 50px;
+    box-sizing: border-box;
+    margin-left: 8px;
+    margin-bottom: 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+}
+#left_panel ul li>p {
+    display: inline;
+    font-weight: bold;
+    flex-grow: 1;
+}
+#left_panel ul li .avatar {
+    width: 2em;
+    height: 2em;
+}
+#left_panel ul li:hover, #left_panel ul li.current {
+    background-color: #333940;
+}
+#left_panel ul li.output {
+    
+}
+#left_panel ul li.input {
+    
+}
+#left_panel ul li p::after {
+    content: url("/static/imgs/icons/warning/FF3C00");
+    display: inline-block;
+    width: 1em;
+    margin-left: .3em;
+    vertical-align: middle;
+}
+#left_panel ul li.is_contact p::after {
+    content: unset;
+}
+#left_panel ul li.is_verified p::after {
+    content: url("/static/imgs/icons/verified/FF3C00");
+}
+#left_panel ul li .not_seen_marker {
+    width: .8em;
+    height: .8em;
+    background-color: var(--accent);
+    border-radius: 1em;
+}
+#refresher {
+    position: relative;
+}
+#refresher button {
+    position: absolute;
+    right: 10px;
+    top: 1em;
+    z-index: 1;
+}
+#refresher button::after {
+    content: url("/static/imgs/icons/refresh");  
+}
+#connect_box {
+    margin-bottom: 20px;
+}
+#chat_header {
+    flex-direction: row;
+    align-items: center;
+    padding: 5px 20px;
+    font-size: 1.5em;
+}
+#chat_header>div {
+    display: flex;
+    align-items: center;
+    flex-grow: 1;
+}
+#chat_header>div>p {
+    font-weight: bold;
+}
+#chat_header p::after {
+    content: url("/static/imgs/icons/warning/FF3C00");
+    display: inline-block;
+    width: 1.2em;
+    vertical-align: middle;
+    padding-left: .3em;
+}
+#chat_header.is_contact p::after {
+    content: unset;
+}
+#chat_header.is_verified p::after {
+    content: url("/static/imgs/icons/verified/FF3C00");
+}
+#chat_header.is_contact #delete_conversation::after {
+    content: url("/static/imgs/icons/delete_conversation");
+}
+#add_contact::after {
+    content: url("/static/imgs/icons/add_contact");
+}
+#chat_header.is_contact #remove_contact::after {
+    content: url("/static/imgs/icons/remove_contact");
+}
+#chat_header.is_contact #verify {
+    display: unset;
+}
+#chat_header #verify,
+#chat_header.is_verified #verify,
+#chat_header.is_contact #add_contact,
+#chat_header.offline #add_contact {
+    display: none;
+}
+#chat_header.is_contact #verify::after {
+    content: url("/static/imgs/icons/verified");
+}
+#logout::after {
+    content: url("/static/imgs/icons/logout");
+}
+#message_input {
+    border: unset;
+    padding: 1em;
+    font-size: 1.1em;
+}
+#message_box {
+    border-top: 2px solid var(--accent);
+    margin-bottom: 0;
+}
+#msg_log {
+    font-size: 1.1em;
+    overflow-y: scroll;
+    white-space: pre;
+}
+#msg_log li>div:first-of-type { /*message header*/
+    display: flex;
+    align-items: center;
+}
+#msg_log p.name {
+    margin: 0;
+    color: var(--accent);
+    font-weight: bold;
+}
+#msg_log li>div:last-of-type { /*message content container*/
+    margin-left: 2em;
+}
+#msg_log li p {
+    margin-top: 0;
+}
+#msg_log a {
+    color: #238cf5;
+}
+#msg_log .file {
+    display: flex;
+    align-items: end;
+    margin-bottom: 1em;
+    border-left: 3px solid var(--accent);
+    padding-left: .5em;
+    margin-top: .5em;
+}
+#msg_log .file div { /*title and filename container*/
+    display: flex;
+    flex-direction: column;
+}
+#msg_log .file h4 {
+    margin: 0;
+}
+#msg_log .file p {
+    margin: 0;
+    color: var(--accent);
+}
+#msg_log .file a::after {
+    content: url("/static/imgs/icons/download/FF3C00");
+    display: block;
+    width: 2em;
+    margin-left: 1em;
+}
+#message_box, #chat_header, #msg_log {
+    display: none;
+}

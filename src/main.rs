@@ -82,13 +82,9 @@ fn discover_peers(session_manager: Arc<SessionManager>) {
     });
 }
 
-fn load_msgs(session_manager: Arc<SessionManager>, ui_connection: &mut UiConnection, session_id: &usize) -> usize {
-    match session_manager.load_msgs(session_id, constants::MSG_LOADING_COUNT) {
-        Some(msgs) => {
-            ui_connection.load_msgs(session_id, &msgs);
-            msgs.len()
-        }
-        None => 0
+fn load_msgs(session_manager: Arc<SessionManager>, ui_connection: &mut UiConnection, session_id: &usize) {
+    if let Some(msgs) = session_manager.load_msgs(session_id, constants::MSG_LOADING_COUNT) {
+        ui_connection.load_msgs(session_id, &msgs);
     }
 }
 
@@ -460,6 +456,8 @@ fn handle_static(req: HttpRequest) -> HttpResponse {
     if splits[0] == "static" {
         let mut response_builder = HttpResponse::Ok();
         match splits[1] {
+            "index.js" => return response_builder.content_type(JS_CONTENT_TYPE).body(include_str!("frontend/index.js")),
+            "index.css" => return response_builder.body(include_str!("frontend/index.css")),
             "imgs" => {
                 if splits[2] == "icons" && splits.len() <= 5 {
                     let color = if splits.len() == 5 {
