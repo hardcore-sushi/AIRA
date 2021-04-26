@@ -7,7 +7,7 @@ mod ui_interface;
 mod constants;
 mod discovery;
 
-use std::{env, fs, io, net::{SocketAddr, TcpStream}, path::Path, str::FromStr, sync::{Arc, RwLock}};
+use std::{env, fs, io, net::SocketAddr, path::Path, str::FromStr, sync::{Arc, RwLock}};
 use tokio::{net::TcpListener, runtime::Handle};
 use actix_web::{App, HttpMessage, HttpRequest, HttpResponse, HttpServer, http::{header, CookieBuilder}, web, web::Data};
 use actix_multipart::Multipart;
@@ -32,17 +32,31 @@ async fn start_websocket_server(global_vars: Arc<RwLock<GlobalVars>>) -> u16 {
         loop {
             let (stream, _addr) = server.accept().await.unwrap();
             if *worker_done.read().unwrap() {
-                let stream = stream.into_std().unwrap();
-                stream.set_nonblocking(false).unwrap();
-                match tungstenite::accept(stream.try_clone().unwrap()) {
-                    Ok(websocket) => {
-                        let ui_connection = UiConnection::new(websocket);
-                        let global_vars = global_vars.clone();
-                        global_vars.read().unwrap().session_manager.set_ui_connection(ui_connection);
-                        *worker_done.write().unwrap() = false;
-                        websocket_worker(stream, global_vars, worker_done.clone()).await;
+                let ui_auth_token = {
+                    global_vars.clone().read().unwrap().ui_auth_token.clone()
+                };
+                if let Some(ui_auth_token) = ui_auth_token {
+                    let stream = stream.into_std().unwrap();
+                    stream.set_nonblocking(false).unwrap();
+                    match tungstenite::accept(stream.try_clone().unwrap()) {
+                        Ok(mut websocket) => {
+                            if let Ok(message) = websocket.read_message() { //waiting for auth token
+                                match message.into_text() {
+                                    Ok(token) => {
+                                        if token == ui_auth_token {
+                                            let ui_connection = UiConnection::new(websocket);
+                                            let global_vars = global_vars.clone();
+                                            global_vars.read().unwrap().session_manager.set_ui_connection(ui_connection.clone());
+                                            *worker_done.write().unwrap() = false;
+                                            websocket_worker(ui_connection, global_vars, worker_done.clone()).await;
+                                        }
+                                    }
+                                    Err(e) => print_error!(e)
+                                }
+                            }
+                        }
+                        Err(e) => print_error!(e)
                     }
-                    Err(e) => print_error!(e)
                 }
             }
         }
@@ -78,8 +92,7 @@ fn load_msgs(session_manager: Arc<SessionManager>, ui_connection: &mut UiConnect
     }
 }
 
-async fn websocket_worker(websocket_strem: TcpStream, global_vars: Arc<RwLock<GlobalVars>>, worker_done: Arc<RwLock<bool>>) {
-    let mut ui_connection = UiConnection::from_raw_socket(websocket_strem.try_clone().unwrap());
+async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLock<GlobalVars>>, worker_done: Arc<RwLock<bool>>) {
     let session_manager = global_vars.read().unwrap().session_manager.clone();
     ui_connection.set_name(&session_manager.get_my_name());
     session_manager.list_contacts().into_iter().for_each(|contact|{
@@ -99,7 +112,7 @@ async fn websocket_worker(websocket_strem: TcpStream, global_vars: Arc<RwLock<Gl
     });
     discover_peers(session_manager.clone());
     let handle = Handle::current();
-    std::thread::spawn(move || {
+    std::thread::spawn(move || { //new thread needed to block on read_message() without blocking tokio tasks
         loop {
             match ui_connection.websocket.read_message() {
                 Ok(msg) => {
@@ -107,8 +120,8 @@ async fn websocket_worker(websocket_strem: TcpStream, global_vars: Arc<RwLock<Gl
                         ui_connection.write_message(Message::Pong(Vec::new())); //not sure if I'm doing this right
                     } else if msg.is_text() {
                         let msg = msg.into_text().unwrap();
+                        let mut ui_connection = ui_connection.clone();
                         let session_manager = session_manager.clone();
-                        let mut ui_connection = UiConnection::from_raw_socket(websocket_strem.try_clone().unwrap());
                         handle.spawn(async move {
                             let args: Vec<&str> = msg.split(" ").collect();
                             match args[0] {
@@ -229,6 +242,16 @@ async fn websocket_worker(websocket_strem: TcpStream, global_vars: Arc<RwLock<Gl
     });
 }
 
+fn is_authenticated(req: &HttpRequest) -> bool {
+    if let Some(cookie) = req.cookie(constants::HTTP_COOKIE_NAME) {
+        let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
+        if let Some(token) = &global_vars.read().unwrap().ui_auth_token {
+            return token == cookie.value();
+        }
+    }
+    false
+}
+
 #[derive(Deserialize, Serialize, Debug)]
 struct FileInfo {
     uuid: String,
@@ -236,65 +259,54 @@ struct FileInfo {
 }
 
 fn handle_load_file(req: HttpRequest, file_info: web::Query<FileInfo>) -> HttpResponse {
-    match req.cookie(constants::HTTP_COOKIE_NAME) {
-        Some(cookie) => {
-            let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
-            let global_vars = global_vars.read().unwrap();
-            if global_vars.http_session_manager.is_registered(cookie.value()) {
-                match Uuid::from_str(&file_info.uuid) {
-                    Ok(uuid) => {
-                        match global_vars.session_manager.load_file(uuid) {
-                            Some(buffer) => {
-                                return HttpResponse::Ok().header("Content-Disposition", format!("attachment; filename=\"{}\"", escape_double_quote(html_escape::decode_html_entities(&file_info.file_name).to_string()))).content_type("application/octet-stream").body(buffer);
-                            }
-                            None => {}
-                        }
+    if is_authenticated(&req) {
+        match Uuid::from_str(&file_info.uuid) {
+            Ok(uuid) => {
+                let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
+                match global_vars.read().unwrap().session_manager.load_file(uuid) {
+                    Some(buffer) => {
+                        return HttpResponse::Ok().header("Content-Disposition", format!("attachment; filename=\"{}\"", escape_double_quote(html_escape::decode_html_entities(&file_info.file_name).to_string()))).content_type("application/octet-stream").body(buffer);
                     }
-                    Err(e) => print_error!(e)
+                    None => {}
                 }
             }
+            Err(e) => print_error!(e)
         }
-        None => {}
     }
     HttpResponse::NotFound().finish()
 }
 
 async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpResponse {
-    let cookie = req.cookie(constants::HTTP_COOKIE_NAME);
-    if cookie.is_some() {
-        let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
-        let global_vars_read = global_vars.read().unwrap();
-        if global_vars_read.http_session_manager.is_registered(cookie.unwrap().value()) {
-            drop(global_vars_read); //releasing mutex while uploading the file
-            let mut session_id: Option<usize> = None;
-            while let Ok(Some(mut field)) = payload.try_next().await {
-                let content_disposition = field.content_disposition().unwrap();
-                if let Some(name) = content_disposition.get_name() {
-                    if name == "session_id" {
-                        if let Some(Ok(raw_id)) = field.next().await {
-                            session_id = Some(std::str::from_utf8(&raw_id).unwrap().parse().unwrap());
-                        }
-                    } else if session_id.is_some() {
-                        let filename = content_disposition.get_filename().unwrap();
-                        let mut buffer = Vec::new();
-                        while let Some(chunk) = field.next().await {
-                            buffer.extend(chunk.unwrap());
-                        }
-                        let session_id = session_id.unwrap();
-                        let global_vars_read = global_vars.read().unwrap();
-                        match global_vars_read.session_manager.send_to(&session_id,  protocol::file(filename, &buffer)).await {
-                            Ok(_) => {
-                                match global_vars_read.session_manager.store_file(&session_id, &buffer) {
-                                    Ok(file_uuid) => {
-                                        let msg = [&[protocol::Headers::FILE][..], file_uuid.as_bytes(), filename.as_bytes()].concat();
-                                        global_vars_read.session_manager.store_msg(&session_id, true, msg);
-                                        return HttpResponse::Ok().body(file_uuid.to_string());
-                                    }
-                                    Err(e) => print_error!(e)
+    if is_authenticated(&req) {
+        let mut session_id: Option<usize> = None;
+        while let Ok(Some(mut field)) = payload.try_next().await {
+            let content_disposition = field.content_disposition().unwrap();
+            if let Some(name) = content_disposition.get_name() {
+                if name == "session_id" {
+                    if let Some(Ok(raw_id)) = field.next().await {
+                        session_id = Some(std::str::from_utf8(&raw_id).unwrap().parse().unwrap());
+                    }
+                } else if session_id.is_some() {
+                    let filename = content_disposition.get_filename().unwrap();
+                    let mut buffer = Vec::new();
+                    while let Some(chunk) = field.next().await {
+                        buffer.extend(chunk.unwrap());
+                    }
+                    let session_id = session_id.unwrap();
+                    let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
+                    let global_vars_read = global_vars.read().unwrap();
+                    match global_vars_read.session_manager.send_to(&session_id,  protocol::file(filename, &buffer)).await {
+                        Ok(_) => {
+                            match global_vars_read.session_manager.store_file(&session_id, &buffer) {
+                                Ok(file_uuid) => {
+                                    let msg = [&[protocol::Headers::FILE][..], file_uuid.as_bytes(), filename.as_bytes()].concat();
+                                    global_vars_read.session_manager.store_msg(&session_id, true, msg);
+                                    return HttpResponse::Ok().body(file_uuid.to_string());
                                 }
+                                Err(e) => print_error!(e)
                             }
-                            Err(e) => print_error!(e)
                         }
+                        Err(e) => print_error!(e)
                     }
                 }
             }
@@ -304,27 +316,25 @@ async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpRespo
 }
 
 async fn handle_logout(req: HttpRequest) -> HttpResponse {
-    match req.cookie(constants::HTTP_COOKIE_NAME) {
-        Some(cookie) => {
-            let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
-            let mut global_vars_write = global_vars.write().unwrap();
-            if global_vars_write.session_manager.is_identity_loaded() {
-                global_vars_write.http_session_manager.remove(cookie.value());
-                global_vars_write.session_manager.stop().await;
-            }
-            if Identity::is_protected().unwrap_or(true) {
-                HttpResponse::Found().header(header::LOCATION, "/").finish()
-            } else {
-                HttpResponse::Ok().body(include_str!("frontend/logout.html"))
-            }
+    if is_authenticated(&req) {
+        let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
+        let mut global_vars_write = global_vars.write().unwrap();
+        if global_vars_write.session_manager.is_identity_loaded() {
+            global_vars_write.ui_auth_token = None;
+            global_vars_write.session_manager.stop().await;
         }
-        None => HttpResponse::Unauthorized().finish()
+        if Identity::is_protected().unwrap_or(true) {
+            HttpResponse::Found().header(header::LOCATION, "/").finish()
+        } else {
+            HttpResponse::Ok().body(include_str!("frontend/logout.html"))
+        }
+    } else {
+        HttpResponse::Unauthorized().finish()
     }
 }
 
 fn login(identity: Identity, global_vars: &Arc<RwLock<GlobalVars>>) -> HttpResponse {
     let mut global_vars_write = global_vars.write().unwrap();
-    let cookie_value = global_vars_write.http_session_manager.register();
     let session_manager = global_vars_write.session_manager.clone();
     if !session_manager.is_identity_loaded() {
         global_vars_write.session_manager.set_identity(Some(identity));
@@ -334,11 +344,15 @@ fn login(identity: Identity, global_vars: &Arc<RwLock<GlobalVars>>) -> HttpRespo
             }
         });
     }
-    let cookie = CookieBuilder::new(constants::HTTP_COOKIE_NAME, cookie_value)
-        .http_only(true)
-        .max_age(time::Duration::hours(4)
-    ).finish();
-    HttpResponse::Found().header(header::LOCATION, "/").set_header(header::SET_COOKIE, cookie.to_string()).finish()
+    let mut raw_cookie = [0; 32];
+    OsRng.fill_bytes(&mut raw_cookie);
+    let cookie_value = base64::encode(raw_cookie);
+    global_vars_write.ui_auth_token = Some(cookie_value.clone());
+    let cookie = CookieBuilder::new(constants::HTTP_COOKIE_NAME, cookie_value).max_age(time::Duration::hours(4)).finish();
+    HttpResponse::Found()
+        .header(header::LOCATION, "/")
+        .set_header(header::SET_COOKIE, cookie.to_string())
+        .finish()
 }
 
 fn on_identity_loaded(identity: Identity, global_vars: &Arc<RwLock<GlobalVars>>) -> HttpResponse {
@@ -428,21 +442,14 @@ fn index_not_logged_in(global_vars: &Arc<RwLock<GlobalVars>>) -> HttpResponse {
 
 async fn handle_index(req: HttpRequest) -> HttpResponse {
     let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
-    match req.cookie(constants::HTTP_COOKIE_NAME) {
-        Some(cookie) => {
-            let global_vars_read = global_vars.read().unwrap();
-            if global_vars_read.http_session_manager.is_registered(cookie.value()) {
-                HttpResponse::Ok().body(
-                    include_str!("frontend/index.html")
-                        .replace("WEBSOCKET_PORT", &global_vars_read.websocket_port.to_string())
-                        .replace("IS_IDENTITY_PROTECTED", &Identity::is_protected().unwrap().to_string())
-                )
-            } else {
-                drop(global_vars_read);
-                index_not_logged_in(global_vars)
-            }
-        }
-        None => index_not_logged_in(global_vars)
+    if is_authenticated(&req) {
+        HttpResponse::Ok().body(
+            include_str!("frontend/index.html")
+                .replace("WEBSOCKET_PORT", &global_vars.read().unwrap().websocket_port.to_string())
+                .replace("IS_IDENTITY_PROTECTED", &Identity::is_protected().unwrap().to_string())
+        )
+    } else {
+        index_not_logged_in(global_vars)
     }
 }
 
@@ -564,38 +571,10 @@ struct CreateParams {
     password_confirm: String,
 }
 
-struct HttpSessionsManager {
-    http_sessions: Vec<String>,
-}
-
-impl HttpSessionsManager {
-    fn get_index(&self, cookie: &str) -> Option<usize> {
-        self.http_sessions.iter().position(|c| c == cookie)
-    }
-    pub fn new() -> HttpSessionsManager {
-        HttpSessionsManager {
-            http_sessions: Vec::new()
-        }
-    }
-    pub fn register(&mut self) -> String {
-        let mut raw_cookie = [0; 32];
-        OsRng.fill_bytes(&mut raw_cookie);
-        let cookie = base64::encode(raw_cookie);
-        self.http_sessions.push(cookie.clone());
-        cookie
-    }
-    pub fn remove(&mut self, cookie: &str) -> Option<String> {
-        Some(self.http_sessions.remove(self.get_index(cookie)?))
-    }
-    pub fn is_registered(&self, cookie: &str) -> bool {
-        self.get_index(cookie).is_some()
-    }
-}
-
 struct GlobalVars {
     session_manager: Arc<SessionManager>,
     websocket_port: u16,
-    http_session_manager: HttpSessionsManager,
+    ui_auth_token: Option<String>,
     tokio_handle: Handle,
 }
 
@@ -612,7 +591,7 @@ async fn main() {
     let global_vars = Arc::new(RwLock::new(GlobalVars {
         session_manager: Arc::new(SessionManager::new()),
         websocket_port: 0,
-        http_session_manager: HttpSessionsManager::new(),
+        ui_auth_token: None,
         tokio_handle: Handle::current(),
     }));
     let websocket_port = start_websocket_server(global_vars.clone()).await;

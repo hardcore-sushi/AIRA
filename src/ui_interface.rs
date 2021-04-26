@@ -91,11 +91,6 @@ pub struct UiConnection{
 }
 
 impl UiConnection {
-    pub fn from_raw_socket(stream: TcpStream) -> UiConnection {
-        let websocket = WebSocket::from_raw_socket(stream, Role::Server, None);
-        UiConnection::new(websocket)
-    }
-
     pub fn new(websocket: WebSocket<TcpStream>) -> UiConnection {
         UiConnection {
             websocket: websocket,
@@ -160,5 +155,14 @@ impl UiConnection {
     }
     pub fn logout(&mut self) {
         self.write_message(Message::from("logout"));
+    }
+}
+
+impl Clone for UiConnection {
+    fn clone(&self) -> Self {
+        UiConnection {
+            websocket: WebSocket::from_raw_socket(self.websocket.get_ref().try_clone().unwrap(), Role::Server, None),
+            is_valid: self.is_valid
+        }
     }
 }
