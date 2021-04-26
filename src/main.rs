@@ -8,7 +8,7 @@ mod constants;
 mod discovery;
 
 use std::{env, fs, io, net::{SocketAddr, TcpStream}, path::Path, str::FromStr, sync::{Arc, RwLock}};
-use tokio::net::{TcpListener};
+use tokio::{net::TcpListener, runtime::Handle};
 use actix_web::{App, HttpMessage, HttpRequest, HttpResponse, HttpServer, http::{header, CookieBuilder}, web, web::Data};
 use actix_multipart::Multipart;
 use tungstenite::Message;
@@ -87,17 +87,9 @@ async fn websocket_worker(websocket_strem: TcpStream, global_vars: Arc<RwLock<Gl
         session_manager.last_loaded_msg_offsets.write().unwrap().insert(contact.0, 0);
         load_msgs(session_manager.clone(), &mut ui_connection, &contact.0);
     });
-    if global_vars.read().unwrap().is_backend_running { //ui reconnection
-        session_manager.list_sessions().into_iter().for_each(|session| {
-            ui_connection.on_new_session(session.0, session.1);
-        });
-    } else {
-        if SessionManager::start_listener(session_manager.clone()).await.is_err() {
-            print_error!("You won't be able to receive incomming connections from other peers.");
-        }
-        discovery::advertise_me();
-        global_vars.write().unwrap().is_backend_running = true;
-    }
+    session_manager.list_sessions().into_iter().for_each(|session| {
+        ui_connection.on_new_session(session.0, session.1);
+    });
     let not_seen = session_manager.list_not_seen();
     if not_seen.len() > 0 {
         ui_connection.set_not_seen(not_seen);
@@ -106,7 +98,7 @@ async fn websocket_worker(websocket_strem: TcpStream, global_vars: Arc<RwLock<Gl
         ui_connection.load_msgs(&msgs.0, &msgs.1);
     });
     discover_peers(session_manager.clone());
-    let handle = tokio::runtime::Handle::current();
+    let handle = Handle::current();
     std::thread::spawn(move || {
         loop {
             match ui_connection.websocket.read_message() {
@@ -115,7 +107,6 @@ async fn websocket_worker(websocket_strem: TcpStream, global_vars: Arc<RwLock<Gl
                         ui_connection.write_message(Message::Pong(Vec::new())); //not sure if I'm doing this right
                     } else if msg.is_text() {
                         let msg = msg.into_text().unwrap();
-                        let global_vars = global_vars.clone();
                         let session_manager = session_manager.clone();
                         let mut ui_connection = UiConnection::from_raw_socket(websocket_strem.try_clone().unwrap());
                         handle.spawn(async move {
@@ -191,10 +182,9 @@ async fn websocket_worker(websocket_strem: TcpStream, global_vars: Arc<RwLock<Gl
                                     };
                                 }
                                 "change_password" => {
-                                    let global_vars_read = global_vars.read().unwrap();
                                     let (old_password, new_password) = if args.len() == 3 {
                                         (Some(base64::decode(args[1]).unwrap()), Some(base64::decode(args[2]).unwrap()))
-                                    } else if global_vars_read.is_identity_protected { //sent old_password
+                                    } else if Identity::is_protected().unwrap() { //sent old_password
                                         (Some(base64::decode(args[1]).unwrap()), None)
                                     } else { //sent new password
                                         (None, Some(base64::decode(args[1]).unwrap()))
@@ -210,14 +200,7 @@ async fn websocket_worker(websocket_strem: TcpStream, global_vars: Arc<RwLock<Gl
                                         false
                                     };
                                     match result {
-                                        Ok(success) => {
-                                            ui_connection.password_changed(success, is_identity_protected);
-                                            if success && is_identity_protected != global_vars_read.is_identity_protected { 
-                                                drop(global_vars_read);
-                                                let mut global_vars_write = global_vars.write().unwrap();
-                                                global_vars_write.is_identity_protected = is_identity_protected;
-                                            }
-                                        }
+                                        Ok(success) => ui_connection.password_changed(success, is_identity_protected),
                                         Err(e) => print_error!(e)
                                     }
                                 }
@@ -325,12 +308,11 @@ async fn handle_logout(req: HttpRequest) -> HttpResponse {
         Some(cookie) => {
             let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
             let mut global_vars_write = global_vars.write().unwrap();
-            if global_vars_write.is_backend_running {
+            if global_vars_write.session_manager.is_identity_loaded() {
                 global_vars_write.http_session_manager.remove(cookie.value());
                 global_vars_write.session_manager.stop().await;
-                global_vars_write.is_backend_running = false;
             }
-            if global_vars_write.is_identity_protected {
+            if Identity::is_protected().unwrap_or(true) {
                 HttpResponse::Found().header(header::LOCATION, "/").finish()
             } else {
                 HttpResponse::Ok().body(include_str!("frontend/logout.html"))
@@ -340,11 +322,17 @@ async fn handle_logout(req: HttpRequest) -> HttpResponse {
     }
 }
 
-async fn login(identity: Identity, global_vars: &Arc<RwLock<GlobalVars>>) -> HttpResponse {
+fn login(identity: Identity, global_vars: &Arc<RwLock<GlobalVars>>) -> HttpResponse {
     let mut global_vars_write = global_vars.write().unwrap();
     let cookie_value = global_vars_write.http_session_manager.register();
-    if !global_vars_write.session_manager.is_identity_loaded() {
-        global_vars_write.session_manager.set_identity(Some(identity)).await;
+    let session_manager = global_vars_write.session_manager.clone();
+    if !session_manager.is_identity_loaded() {
+        global_vars_write.session_manager.set_identity(Some(identity));
+        global_vars_write.tokio_handle.clone().spawn(async move {
+            if SessionManager::start_listener(session_manager.clone()).await.is_err() {
+                print_error!("You won't be able to receive incomming connections from other peers.");
+            }
+        });
     }
     let cookie = CookieBuilder::new(constants::HTTP_COOKIE_NAME, cookie_value)
         .http_only(true)
@@ -353,19 +341,19 @@ async fn login(identity: Identity, global_vars: &Arc<RwLock<GlobalVars>>) -> Htt
     HttpResponse::Found().header(header::LOCATION, "/").set_header(header::SET_COOKIE, cookie.to_string()).finish()
 }
 
-async fn on_identity_loaded(identity: Identity, global_vars: &Arc<RwLock<GlobalVars>>) -> HttpResponse {
+fn on_identity_loaded(identity: Identity, global_vars: &Arc<RwLock<GlobalVars>>) -> HttpResponse {
     match Identity::clear_temporary_files() {
         Ok(_) => {},
         Err(e) => print_error!(e)
     }
-    login(identity, global_vars).await
+    login(identity, global_vars)
 }
 
-async fn handle_login(req: HttpRequest, mut params: web::Form<LoginParams>) -> HttpResponse {
+fn handle_login(req: HttpRequest, mut params: web::Form<LoginParams>) -> HttpResponse {
     let response = match Identity::load_identity(Some(params.password.as_bytes())) {
         Ok(identity) => {
             let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
-            on_identity_loaded(identity, global_vars).await
+            on_identity_loaded(identity, global_vars)
         }
         Err(e) => generate_login_response(Some(&e.to_string()))
     };
@@ -412,7 +400,7 @@ async fn handle_create(req: HttpRequest, mut params: web::Form<CreateParams>) ->
         ) {
             Ok(identity) => {
                 let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
-                login(identity, global_vars.get_ref()).await
+                login(identity, global_vars.get_ref())
             }
             Err(e) => {
                 print_error!(e);
@@ -427,15 +415,12 @@ async fn handle_create(req: HttpRequest, mut params: web::Form<CreateParams>) ->
     response
 }
 
-async fn index_not_logged_in(global_vars: &Arc<RwLock<GlobalVars>>) -> HttpResponse {
-    let global_vars_read = global_vars.read().unwrap();
-    let is_protected = global_vars_read.is_identity_protected;
-    drop(global_vars_read);
-    if is_protected {
+fn index_not_logged_in(global_vars: &Arc<RwLock<GlobalVars>>) -> HttpResponse {
+    if Identity::is_protected().unwrap_or(true) {
         generate_login_response(None)
     } else {
         match Identity::load_identity(None) {
-            Ok(identity) => on_identity_loaded(identity, global_vars).await,
+            Ok(identity) => on_identity_loaded(identity, global_vars),
             Err(_) => generate_login_response(None) //assuming no identity
         }
     }
@@ -450,14 +435,14 @@ async fn handle_index(req: HttpRequest) -> HttpResponse {
                 HttpResponse::Ok().body(
                     include_str!("frontend/index.html")
                         .replace("WEBSOCKET_PORT", &global_vars_read.websocket_port.to_string())
-                        .replace("IS_IDENTITY_PROTECTED", &global_vars_read.is_identity_protected.to_string())
+                        .replace("IS_IDENTITY_PROTECTED", &Identity::is_protected().unwrap().to_string())
                 )
             } else {
                 drop(global_vars_read);
-                index_not_logged_in(global_vars).await
+                index_not_logged_in(global_vars)
             }
         }
-        None => index_not_logged_in(global_vars).await
+        None => index_not_logged_in(global_vars)
     }
 }
 
@@ -609,10 +594,9 @@ impl HttpSessionsManager {
 
 struct GlobalVars {
     session_manager: Arc<SessionManager>,
-    is_backend_running: bool,
     websocket_port: u16,
-    is_identity_protected: bool,
     http_session_manager: HttpSessionsManager,
+    tokio_handle: Handle,
 }
 
 #[tokio::main]
@@ -627,10 +611,9 @@ async fn main() {
     }
     let global_vars = Arc::new(RwLock::new(GlobalVars {
         session_manager: Arc::new(SessionManager::new()),
-        is_backend_running: false,
         websocket_port: 0,
-        is_identity_protected: Identity::is_protected().unwrap_or(false),
         http_session_manager: HttpSessionsManager::new(),
+        tokio_handle: Handle::current(),
     }));
     let websocket_port = start_websocket_server(global_vars.clone()).await;
     global_vars.write().unwrap().websocket_port = websocket_port;

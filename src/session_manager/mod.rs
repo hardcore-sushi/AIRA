@@ -3,11 +3,12 @@ pub mod protocol;
 
 use std::{collections::HashMap, net::{IpAddr, SocketAddr}, io, sync::{Mutex, RwLock, Arc}};
 use tokio::{net::{TcpListener, TcpStream}, sync::{mpsc, mpsc::Sender}};
-use session::Session;
+use libmdns::Service;
 use strum_macros::Display;
+use session::Session;
 use ed25519_dalek::PUBLIC_KEY_LENGTH;
 use uuid::Uuid;
-use crate::{constants, identity::{Contact, Identity}, print_error};
+use crate::{constants, discovery, identity::{Contact, Identity}, print_error};
 use crate::ui_interface::UiConnection;
 
 #[derive(Display, Debug, PartialEq, Eq)]
@@ -36,6 +37,7 @@ pub struct SessionManager {
     pub last_loaded_msg_offsets: RwLock<HashMap<usize, usize>>,
     pub saved_msgs: Mutex<HashMap<usize, Vec<(bool, Vec<u8>)>>>,
     not_seen: RwLock<Vec<usize>>,
+    mdns_service: Mutex<Option<Service>>,
     listener_stop_signal: Mutex<Option<Sender<()>>>,
 }
 
@@ -178,16 +180,18 @@ impl SessionManager {
                                     Ok(buffer) => {
                                         if buffer[0] == protocol::Headers::ASK_NAME {
                                             let name = {
-                                                session_manager.identity.read().unwrap().as_ref().unwrap().name.clone()
+                                                session_manager.identity.read().unwrap().as_ref().and_then(|identity| Some(identity.name.clone()))
                                             };
-                                            match session.encrypt_and_send(&protocol::tell_name(&name)).await {
-                                                Ok(_) => {}
-                                                Err(e) => {
-                                                    print_error!(e);
-                                                    session.close();
-                                                    break;
+                                            if name.is_some() { //can be None if we log out just before locking the identity mutex
+                                                match session.encrypt_and_send(&protocol::tell_name(&name.unwrap())).await {
+                                                    Ok(_) => {}
+                                                    Err(e) => {
+                                                        print_error!(e);
+                                                        session.close();
+                                                        break;
+                                                    }
                                                 }
-                                            }
+                                            }                                            
                                         } else {
                                             let buffer = if buffer[0] == protocol::Headers::FILE {
                                                 let file_name_len = u16::from_be_bytes([buffer[1], buffer[2]]) as usize;
@@ -277,6 +281,7 @@ impl SessionManager {
         let server_v4 = TcpListener::bind(SocketAddr::new("0.0.0.0".parse().unwrap(), constants::PORT)).await?;
         let (sender, mut receiver) = mpsc::channel(1);
         *session_manager.listener_stop_signal.lock().unwrap() = Some(sender);
+        *session_manager.mdns_service.lock().unwrap() = Some(discovery::advertise_me());
         tokio::spawn(async move {
             loop {
                 let (stream, _addr) = (tokio::select! {
@@ -422,8 +427,13 @@ impl SessionManager {
 
     #[allow(unused_must_use)]
     pub async fn stop(&self) {
-        self.listener_stop_signal.lock().unwrap().as_ref().unwrap().send(()).await;
-        self.set_identity(None).await;
+        *self.mdns_service.lock().unwrap() = None; //unregister mdns service
+        let mut sender = self.listener_stop_signal.lock().unwrap();
+        if sender.is_some() {
+            sender.as_ref().unwrap().send(()).await;
+            *sender = None;
+        }
+        self.set_identity(None);
         for (_, _, sender) in self.sessions.read().unwrap().values() {
             sender.send(SessionCommand::Close).await;
         }
@@ -438,7 +448,7 @@ impl SessionManager {
     }
 
     #[allow(unused_must_use)]
-    pub async fn set_identity(&self, identity: Option<Identity>) {
+    pub fn set_identity(&self, identity: Option<Identity>) {
         let mut identity_guard = self.identity.write().unwrap();
         if identity.is_none() { //logout
             identity_guard.as_mut().unwrap().zeroize();
@@ -477,6 +487,7 @@ impl SessionManager {
             last_loaded_msg_offsets: RwLock::new(HashMap::new()),
             saved_msgs: Mutex::new(HashMap::new()),
             not_seen: RwLock::new(Vec::new()),
+            mdns_service: Mutex::new(None),
             listener_stop_signal: Mutex::new(None),
         }
     }

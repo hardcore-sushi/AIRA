@@ -7,10 +7,10 @@ edition = "2018"
 [dependencies]
 rand-8 = {package = "rand", version = "0.8.3"}
 rand-7 = {package = "rand", version = "0.7.3"}
-tokio = {version = "1", features = ["full"]}
+tokio = {version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "io-util"]}
 lazy_static = "1.4"
 socket2 = "0.4.0"
-mio = "0.7"
+rusqlite = {version = "0.25.1", features = ["bundled"]}
 ed25519-dalek = "1" #for singing
 x25519-dalek = "1.1" #for shared secret
 sha2 = "0.9.3"
@@ -26,16 +26,12 @@ tungstenite = "0.13.0" #websocket
 serde = "1.0.124" #serialization
 html-escape = "0.2.7"
 dirs = "3.0"
-uuid = { version = "0.8", features = ["v4"] }
+uuid = {version = "0.8", features = ["v4"]}
 webbrowser = "0.5.5"
-astro-dnssd = "0.2.0" #mDNS advertiser
+libmdns = "0.6" #mDNS advertiser
 multicast_dns = "0.5" #mDNS browser
 base64 = "0.13.0"
 time = "0.2.25"
 aes-gcm-siv = "0.9.0"
 scrypt = "0.6.3"
 zeroize = "1.2.0"
-
-[dependencies.rusqlite]
-version = "0.25.0"
-features = ["bundled"]
