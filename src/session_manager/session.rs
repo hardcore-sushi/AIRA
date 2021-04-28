@@ -34,7 +34,6 @@ impl Session {
     const MAX_RECV_SIZE: usize = MESSAGE_LEN_LEN + Session::PADDED_MAX_SIZE + AES_TAG_LEN;
 
     pub fn new(stream: TcpStream) -> Session {
-        //stream.set_read_timeout(Some(Duration::from_millis(1000))).unwrap();
         Session {
             stream: stream,
             handshake_sent_buff: Vec::new(),
@@ -47,6 +46,10 @@ impl Session {
             peer_counter: 0,
             peer_public_key: None,
         }
+    }
+
+    pub fn get_ip(&self) -> String {
+        self.stream.peer_addr().unwrap().ip().to_string()
     }
 
     async fn socket_read(&mut self, buff: &mut [u8]) -> Result<usize, SessionError> {
@@ -70,7 +73,7 @@ impl Session {
         }        
     }
 
-    async fn socket_write(&mut self, buff: &[u8]) -> Result<(), SessionError> {
+    pub async fn socket_write(&mut self, buff: &[u8]) -> Result<(), SessionError> {
         match self.stream.write_all(buff).await {
             Ok(_) => Ok(()),
             Err(e) => Err(match e.kind() {
@@ -210,8 +213,8 @@ impl Session {
         let msg_len = MessageLenType::from_be_bytes(input[0..MESSAGE_LEN_LEN].try_into().unwrap()) as usize;
         Vec::from(&input[MESSAGE_LEN_LEN..MESSAGE_LEN_LEN+msg_len])
     }
-    
-    pub async fn encrypt_and_send(&mut self, message: &[u8]) -> Result<(), SessionError> {
+
+    pub fn encrypt(&mut self, message: &[u8]) -> Vec<u8> {
         let padded_msg = Session::random_pad(message);
         let cipher_len = (padded_msg.len() as MessageLenType).to_be_bytes();
         let payload = Payload {
@@ -220,7 +223,12 @@ impl Session {
         };
         let nonce = iv_to_nonce(&self.local_iv.unwrap(), &mut self.local_counter);
         let cipher_text = self.local_cipher.as_ref().unwrap().encrypt(GenericArray::from_slice(&nonce), payload).unwrap();
-        self.socket_write([&cipher_len, cipher_text.as_slice()].concat().as_slice()).await
+        [&cipher_len, cipher_text.as_slice()].concat()
+    }
+    
+    pub async fn encrypt_and_send(&mut self, message: &[u8]) -> Result<(), SessionError> {
+        let cipher_text = self.encrypt(message);
+        self.socket_write(&cipher_text).await
     }
 
     pub async fn receive_and_decrypt(&mut self) -> Result<Vec<u8>, SessionError> {
@@ -246,9 +254,5 @@ impl Session {
         } else {
             Err(SessionError::BufferTooLarge)
         }
-    }
-
-    pub fn close(self) {
-        drop(self.stream);
     }
 }

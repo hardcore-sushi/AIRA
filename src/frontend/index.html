@@ -37,6 +37,20 @@
                 </div>
                 <ul id="msg_log">
                 </ul>
+                <div id="file_transfer">
+                    <div id="file_control">
+                        <button id="file_cancel" title="Cancel"></button>
+                        <p id="file_info"></p>
+                    </div>
+                    <p id="file_status"></p>
+                    <div id="file_progress">
+                        <p id="file_percent"></p>
+                        <p id="file_speed"></p>
+                        <div id="file_progress_bar">
+                            <div></div>
+                        </div>
+                    </div>
+                </div>
                 <div id="message_box">
                     <input type="text" id="message_input" placeholder="Send a message...">
                     <label title="Send file" class="file_picker">
@@ -47,8 +61,8 @@
         </main>
         <script>
             //replaced by web server
-            let is_identity_protected = IS_IDENTITY_PROTECTED;
-            let websocket_port = WEBSOCKET_PORT;
+            let isIdentityProtected = IS_IDENTITY_PROTECTED;
+            let websocketPort = WEBSOCKET_PORT;
         </script>
         <script src="/static/libs/linkify.min.js"></script>
         <script src="/static/libs/linkify-element.min.js"></script>

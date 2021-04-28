@@ -1,4 +1,4 @@
-use std::convert::TryInto;
+use std::{convert::TryInto, time::{SystemTime, UNIX_EPOCH}};
 use uuid::Bytes;
 use crate::print_error;
 
@@ -22,6 +22,10 @@ pub fn to_uuid_bytes(bytes: &[u8]) -> Option<Bytes> {
 
 pub fn escape_double_quote(origin: String) -> String {
     origin.replace("\"", "\\\"")
+}
+
+pub fn get_unix_timestamp() -> u128 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()
 }
 
 #[macro_export]

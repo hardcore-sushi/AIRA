@@ -1,4 +1,4 @@
-function generate_avatar(name){
+function generateAvatar(name){
     let span = document.createElement("span");
     if (typeof name == "undefined"){
         span.appendChild(document.createTextNode("?"));

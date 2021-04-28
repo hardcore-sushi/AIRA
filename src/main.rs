@@ -7,8 +7,8 @@ mod ui_interface;
 mod constants;
 mod discovery;
 
-use std::{env, fs, io, net::SocketAddr, path::Path, str::FromStr, sync::{Arc, RwLock}};
-use tokio::{net::TcpListener, runtime::Handle};
+use std::{env, fs, io, net::SocketAddr, str::{FromStr, from_utf8}, sync::{Arc, RwLock}};
+use tokio::{net::TcpListener, runtime::Handle, sync::mpsc};
 use actix_web::{App, HttpMessage, HttpRequest, HttpResponse, HttpServer, http::{header, CookieBuilder}, web, web::Data};
 use actix_multipart::Multipart;
 use tungstenite::Message;
@@ -16,6 +16,7 @@ use futures::{StreamExt, TryStreamExt};
 use rand_8::{RngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use platform_dirs::AppDirs;
 use zeroize::Zeroize;
 use utils::escape_double_quote;
 use identity::Identity;
@@ -96,8 +97,8 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
         session_manager.last_loaded_msg_offsets.write().unwrap().insert(contact.0, 0);
         load_msgs(session_manager.clone(), &mut ui_connection, &contact.0);
     });
-    session_manager.list_sessions().into_iter().for_each(|session| {
-        ui_connection.on_new_session(session.0, session.1);
+    session_manager.sessions.read().unwrap().iter().for_each(|session| {
+        ui_connection.on_new_session(session.0, &session.1.name, session.1.outgoing, session.1.file_transfer.as_ref());
     });
     let not_seen = session_manager.list_not_seen();
     if not_seen.len() > 0 {
@@ -142,6 +143,26 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                         Err(e) => print_error!(e)
                                     }
                                 }
+                                "large_file" => {
+                                    let session_id: usize = args[1].parse().unwrap();
+                                    let file_size: u64 = args[2].parse().unwrap();
+                                    let file_name = &msg[args[0].len()+args[1].len()+args[2].len()+3..];
+                                    if let Err(e) = session_manager.send_to(&session_id, protocol::ask_large_file(file_size, file_name)).await {
+                                        print_error!(e);
+                                    }
+                                }
+                                "download" => {
+                                    let session_id: usize = args[1].parse().unwrap();
+                                    if let Err(e) = session_manager.send_to(&session_id, vec![protocol::Headers::ACCEPT_LARGE_FILE]).await {
+                                        print_error!(e);
+                                    }
+                                }
+                                "abort" => {
+                                    let session_id: usize = args[1].parse().unwrap();
+                                    if let Err(e) = session_manager.send_to(&session_id, vec![protocol::Headers::ABORT_FILE_TRANSFER]).await {
+                                        print_error!(e);
+                                    }
+                                }
                                 "load_msgs" => {
                                     let session_id: usize = args[1].parse().unwrap();
                                     load_msgs(session_manager.clone(), &mut ui_connection, &session_id);
@@ -155,7 +176,7 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                 }
                                 "uncontact" => {
                                     let session_id: usize = args[1].parse().unwrap();
-                                    match session_manager.remove_contact(&session_id) {
+                                    match session_manager.remove_contact(session_id) {
                                         Ok(_) => {},
                                         Err(e) => print_error!(e)
                                     }
@@ -280,29 +301,78 @@ async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpRespo
             if let Some(name) = content_disposition.get_name() {
                 if name == "session_id" {
                     if let Some(Ok(raw_id)) = field.next().await {
-                        session_id = Some(std::str::from_utf8(&raw_id).unwrap().parse().unwrap());
+                        session_id = Some(from_utf8(&raw_id).unwrap().parse().unwrap());
                     }
                 } else if session_id.is_some() {
                     let filename = content_disposition.get_filename().unwrap();
-                    let mut buffer = Vec::new();
-                    while let Some(chunk) = field.next().await {
-                        buffer.extend(chunk.unwrap());
-                    }
                     let session_id = session_id.unwrap();
                     let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
                     let global_vars_read = global_vars.read().unwrap();
-                    match global_vars_read.session_manager.send_to(&session_id,  protocol::file(filename, &buffer)).await {
-                        Ok(_) => {
-                            match global_vars_read.session_manager.store_file(&session_id, &buffer) {
-                                Ok(file_uuid) => {
-                                    let msg = [&[protocol::Headers::FILE][..], file_uuid.as_bytes(), filename.as_bytes()].concat();
-                                    global_vars_read.session_manager.store_msg(&session_id, true, msg);
-                                    return HttpResponse::Ok().body(file_uuid.to_string());
+                    if req.path() == "/send_file" {
+                        let mut buffer = Vec::new();
+                        while let Some(Ok(chunk)) = field.next().await {
+                            buffer.extend(chunk);
+                        }
+                        match global_vars_read.session_manager.send_to(&session_id,  protocol::file(filename, &buffer)).await {
+                            Ok(_) => {
+                                match global_vars_read.session_manager.store_file(&session_id, &buffer) {
+                                    Ok(file_uuid) => {
+                                        let msg = [&[protocol::Headers::FILE][..], file_uuid.as_bytes(), filename.as_bytes()].concat();
+                                        global_vars_read.session_manager.store_msg(&session_id, true, msg);
+                                        return HttpResponse::Ok().body(file_uuid.to_string());
+                                    }
+                                    Err(e) => print_error!(e)
                                 }
-                                Err(e) => print_error!(e)
+                            }
+                            Err(e) => print_error!(e)
+                        }
+                    } else {
+                        let (ack_sender, mut ack_receiver) = mpsc::channel(1);
+                        let mut pending_buffer = Vec::new();
+                        let mut chunk_buffer = Vec::with_capacity(constants::FILE_CHUNK_SIZE);
+                        chunk_buffer.push(protocol::Headers::LARGE_FILE_CHUNK);
+                        ack_sender.send(true).await.unwrap();
+                        loop {
+                            chunk_buffer.extend(&pending_buffer);
+                            pending_buffer.clear();
+                            while let Some(Ok(chunk)) = field.next().await {
+                                if chunk_buffer.len()+chunk.len() <= constants::FILE_CHUNK_SIZE {
+                                    chunk_buffer.extend(chunk);
+                                } else if chunk_buffer.len() == constants::FILE_CHUNK_SIZE {
+                                    pending_buffer.extend(chunk);
+                                    break;
+                                } else {
+                                    let remaining = constants::FILE_CHUNK_SIZE - chunk_buffer.len();
+                                    chunk_buffer.extend(&chunk[..remaining]);
+                                    pending_buffer.extend(&chunk[remaining..]);
+                                    break;
+                                }
+                            }
+                            if let Err(e) = global_vars_read.session_manager.encrypt_file_chunk(&session_id, chunk_buffer.clone()).await {
+                                print_error!(e);
+                                return HttpResponse::InternalServerError().finish();
+                            }
+                            if !match ack_receiver.recv().await {
+                                Some(should_continue) => {
+                                    //send previous encrypted chunk even if transfert is aborted to keep PSEC nonces syncrhonized
+                                    if let Err(e) = global_vars_read.session_manager.send_encrypted_file_chunk(&session_id, ack_sender.clone()).await {
+                                        print_error!(e);
+                                        false
+                                    } else {
+                                        should_continue
+                                    }
+                                }
+                                None => false
+                            } {
+                                return HttpResponse::InternalServerError().finish()
+                            }
+                            if chunk_buffer.len() < constants::FILE_CHUNK_SIZE {
+                                break;
+                            } else {
+                                chunk_buffer.truncate(1);
                             }
                         }
-                        Err(e) => print_error!(e)
+                        return HttpResponse::Ok().finish();
                     }
                 }
             }
@@ -544,6 +614,7 @@ async fn start_http_server(global_vars: Arc<RwLock<GlobalVars>>) -> io::Result<(
             )
             .route("/login", web::post().to(handle_login))
             .route("/send_file", web::post().to(handle_send_file))
+            .route("/send_large_file", web::post().to(handle_send_file))
             .route("/load_file", web::get().to(handle_load_file))
             .route("/static/.*", web::get().to(handle_static))
             .route("/logout", web::get().to(handle_logout))
@@ -578,12 +649,9 @@ struct GlobalVars {
 
 #[tokio::main]
 async fn main() {
-    match fs::create_dir(Path::new(&dirs::data_local_dir().unwrap()).join(constants::APPLICATION_FOLDER)) {
-        Ok(_) => {}
-        Err(e) => {
-            if e.kind() != io::ErrorKind::AlreadyExists {
-                print_error!(e);
-            }
+    if let Err(e) = fs::create_dir(AppDirs::new(Some(constants::APPLICATION_FOLDER), false).unwrap().data_dir) {
+        if e.kind() != io::ErrorKind::AlreadyExists {
+            print_error!(e);
         }
     }
     let global_vars = Arc::new(RwLock::new(GlobalVars {

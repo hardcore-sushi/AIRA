@@ -84,7 +84,7 @@ input[type="file"] {
     font-size: 4em;
     margin: auto;
 }
-.popup>div>div, .popup>div>button {
+.popup section {
     font-weight: bold;
     display: block;
     margin-bottom: 1em;
@@ -104,15 +104,22 @@ input[type="file"] {
 .popup button:hover {
     background-color: var(--accent);
 }
+.popup span {
+    font-weight: bold;
+}
 .popup>div>div p {
     font-weight: normal;
     font-size: 0.9em;
 }
-.popup h2::before {
+.popup h2.warning::before {
     content: url("/static/imgs/icons/warning/FF3C00");
     width: 9%;
     display: inline-block;
     vertical-align: middle;
+}
+.button_row {
+    display: flex;
+    gap: 15px;
 }
 .section_title {
     margin-left: 8px;
@@ -271,6 +278,55 @@ input[type="file"] {
     border: unset;
     padding: 1em;
     font-size: 1.1em;
+}
+#file_transfer {
+    border-top: 2px solid var(--accent);
+    display: none;
+    position: relative;
+}
+#file_transfer.active {
+    display: block;
+}
+#file_transfer span {
+    font-weight: bold;
+}
+#file_control {
+    display: flex;
+    align-items: center;
+}
+#file_cancel {
+    padding: 0;
+}
+#file_cancel::after {
+    background-color: unset;
+    width: 1.2em;
+    content: url("/static/imgs/icons/cancel/FF3C00");
+}
+#file_progress {
+    display: none;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 15px;
+}
+#file_transfer.active>#file_progress {
+    display: flex;
+}
+#file_status {
+    margin-top: 0;
+}
+#file_percent, #file_speed {
+    font-weight: bold;
+    margin: 0;
+    border-left: 2px solid var(--accent);
+    padding-left: 10px;
+}
+#file_progress_bar {
+    flex-grow: 1;
+    height: 1.5em;
+}
+#file_progress_bar div {
+    height: 100%;
+    background-color: var(--accent);
 }
 #message_box {
     border-top: 2px solid var(--accent);

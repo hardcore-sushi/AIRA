@@ -1,8 +1,8 @@
-use std::{convert::TryInto, path::Path};
+use std::convert::TryInto;
 use crypto::CryptoError;
 use ed25519_dalek::{Keypair, Signer, SIGNATURE_LENGTH, PUBLIC_KEY_LENGTH};
 use rusqlite::{Connection, params};
-use dirs;
+use platform_dirs::AppDirs;
 use utils::to_uuid_bytes;
 use uuid::Uuid;
 use zeroize::Zeroize;
@@ -37,7 +37,7 @@ fn byte_to_bool(b: u8) -> Result<bool, ()> {
 }
 
 fn get_database_path() -> String {
-    Path::new(&dirs::data_local_dir().unwrap()).join(constants::APPLICATION_FOLDER).join(constants::DB_NAME).to_str().unwrap().to_owned()
+    AppDirs::new(Some(constants::APPLICATION_FOLDER), false).unwrap().data_dir.join(constants::DB_NAME).to_str().unwrap().to_owned()
 }
 
 struct EncryptedIdentity {
