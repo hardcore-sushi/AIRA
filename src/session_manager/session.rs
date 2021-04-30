@@ -252,6 +252,7 @@ impl Session {
                 Err(_) => Err(SessionError::TransmissionCorrupted)
             }
         } else {
+            print_error!("Buffer too large: {} B", recv_len);
             Err(SessionError::BufferTooLarge)
         }
     }

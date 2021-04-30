@@ -524,15 +524,15 @@ function onFileAborted(sessionId) {
         }
     }
 }
-function onIncFileTransfer(sessionId, chunk_size) {
+function onIncFileTransfer(sessionId, chunkSize) {
     if (pendingFiles.has(sessionId)) {
         let file = pendingFiles.get(sessionId);
-        file.transferred += chunk_size;
+        file.transferred += chunkSize;
         let now = Date.now();
-        let speed = chunk_size/(now-file.lastChunk)*1000;
+        let speed = chunkSize/(now-file.lastChunk)*1000;
         file.lastChunk = now;
         if (file.transferred >= file.size) {
-            file.state = "finished";
+            file.state = "completed";
         } else {
             file.state = "transferring";
         }
@@ -547,25 +547,26 @@ function onMsgLoad(sessionId, outgoing, msg) {
         dislayHistory(false);
     }
 }
-function onFileLoad(sessionId, outgoing, uuid, file_name) {
-    msgHistory.get(sessionId).unshift([outgoing, true, [uuid, file_name]]);
+function onFileLoad(sessionId, outgoing, uuid, fileName) {
+    msgHistory.get(sessionId).unshift([outgoing, true, [uuid, fileName]]);
     if (currentSessionId == sessionId) {
         dislayHistory(false);
     }
 }
 function onDisconnected(sessionId) {
-    if (currentSessionId == sessionId) {
-        displayChatBottom();
-    }
+    pendingFiles.delete(sessionId);
     let session = sessionsData.get(sessionId);
     if (session.is_contact) {
         session.is_online = false;
     } else {
         sessionsData.delete(sessionId);
-        if (currentSessionId == sessionId) {
-            currentSessionId = -1;
-            document.getElementById("chat_header").classList.add("offline");
-        }
+    }
+    if (currentSessionId == sessionId) {
+        displayChatBottom();
+    }
+    if (currentSessionId == sessionId && !session.is_contact) {
+        currentSessionId = -1;
+        document.getElementById("chat_header").classList.add("offline");
     }
     displaySessions();
 }
@@ -808,57 +809,62 @@ function generateFileInfo(fileName, fileSize, p) {
     p.appendChild(document.createTextNode(" ("+humanFileSize(fileSize)+")"));
 }
 function displayChatBottom(speed = undefined) {
+    let msgBox = document.getElementById("message_box");
     let session = sessionsData.get(currentSessionId);
-    if (session.is_online) {
-        document.getElementById("message_box").style.display = "flex";
+    if (typeof session === "undefined") {
+        msgBox.removeAttribute("style");
     } else {
-        document.getElementById("message_box").removeAttribute("style");
-    }
-    let fileTransfer = document.getElementById("file_transfer");
-    if (pendingFiles.has(currentSessionId)) {
-        let file = pendingFiles.get(currentSessionId);
-        let fileInfo = document.getElementById("file_info");
-        fileInfo.innerHTML = "";
-        generateFileInfo(file.name, file.size, fileInfo);
-        let fileProgress = document.getElementById("file_progress");
-        fileProgress.style.display = "none"; //hide by default
-        let fileStatus = document.getElementById("file_status");
-        fileStatus.removeAttribute("style"); //show by default
-        let fileCancel = document.getElementById("file_cancel");
-        fileCancel.style.display = "none"; //hide by default
-        document.querySelector("#file_progress_bar>div").style.width = 0;
-        switch (file.state) {
-            case "transferring":
-                fileCancel.removeAttribute("style"); //show
-                fileStatus.style.display = "none";
-                fileProgress.removeAttribute("style"); //show
-                let percent = (file.transferred/file.size)*100;
-                document.getElementById("file_percent").textContent = percent.toFixed(2)+"%";
-                if (typeof speed !== "undefined") {
-                    document.getElementById("file_speed").textContent = humanFileSize(speed)+"/s";
-                }
-                document.querySelector("#file_progress_bar>div").style.width = Math.round(percent)+"%";
-                break;
-            case "waiting":
-                fileStatus.textContent = "Waiting for peer confirmation...";
-                break;
-            case "accepted":
-                fileStatus.textContent = "Downloading file...";
-                break;
-            case "aborted":
-                fileStatus.textContent = "Transfer aborted.";
-                pendingFiles.delete(currentSessionId);
-                break;
-            case "sending":
-                fileStatus.textContent = "Sending file...";
-                break;
-            case "finished":
-                fileStatus.textContent = "Transfer finished.";
-                pendingFiles.delete(currentSessionId);
+        if (session.is_online) {
+            msgBox.style.display = "flex";
+        } else {
+            msgBox.removeAttribute("style");
         }
-        fileTransfer.classList.add("active");          
-    } else {
-        fileTransfer.classList.remove("active");
+        let fileTransfer = document.getElementById("file_transfer");
+        if (pendingFiles.has(currentSessionId)) {
+            let file = pendingFiles.get(currentSessionId);
+            let fileInfo = document.getElementById("file_info");
+            fileInfo.innerHTML = "";
+            generateFileInfo(file.name, file.size, fileInfo);
+            let fileProgress = document.getElementById("file_progress");
+            fileProgress.style.display = "none"; //hide by default
+            let fileStatus = document.getElementById("file_status");
+            fileStatus.removeAttribute("style"); //show by default
+            let fileCancel = document.getElementById("file_cancel");
+            fileCancel.style.display = "none"; //hide by default
+            document.querySelector("#file_progress_bar>div").style.width = 0;
+            switch (file.state) {
+                case "transferring":
+                    fileCancel.removeAttribute("style"); //show
+                    fileStatus.style.display = "none";
+                    fileProgress.removeAttribute("style"); //show
+                    let percent = (file.transferred/file.size)*100;
+                    document.getElementById("file_percent").textContent = percent.toFixed(2)+"%";
+                    if (typeof speed !== "undefined") {
+                        document.getElementById("file_speed").textContent = humanFileSize(speed)+"/s";
+                    }
+                    document.querySelector("#file_progress_bar>div").style.width = Math.round(percent)+"%";
+                    break;
+                case "waiting":
+                    fileStatus.textContent = "Waiting for peer confirmation...";
+                    break;
+                case "accepted":
+                    fileStatus.textContent = "Downloading file...";
+                    break;
+                case "aborted":
+                    fileStatus.textContent = "Transfer aborted.";
+                    pendingFiles.delete(currentSessionId);
+                    break;
+                case "sending":
+                    fileStatus.textContent = "Sending file...";
+                    break;
+                case "completed":
+                    fileStatus.textContent = "Transfer completed.";
+                    pendingFiles.delete(currentSessionId);
+            }
+            fileTransfer.classList.add("active");          
+        } else {
+            fileTransfer.classList.remove("active");
+        }
     }
 }
 function dislayHistory(scrollToBottom = true) {

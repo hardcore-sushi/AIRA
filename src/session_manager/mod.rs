@@ -9,7 +9,7 @@ use session::Session;
 use ed25519_dalek::PUBLIC_KEY_LENGTH;
 use uuid::Uuid;
 use platform_dirs::UserDirs;
-use crate::{constants, discovery, identity::{Contact, Identity}, utils::get_unix_timestamp, print_error};
+use crate::{constants, discovery, identity::{Contact, Identity}, utils::{get_unix_timestamp, get_not_used_path}, print_error};
 use crate::ui_interface::UiConnection;
 
 #[derive(Display, Debug, PartialEq, Eq)]
@@ -34,7 +34,7 @@ enum SessionCommand {
     },
     Close,
 }
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum FileState {
     ASKING,
     ACCEPTED,
@@ -57,7 +57,7 @@ pub struct SessionData {
     pub outgoing: bool,
     peer_public_key: [u8; PUBLIC_KEY_LENGTH],
     sender: Sender<SessionCommand>,
-    pub file_transfer: Option<LargeFileDownload>,
+    pub file_download: Option<LargeFileDownload>,
 }
 
 pub struct SessionManager {
@@ -164,6 +164,9 @@ impl SessionManager {
     }
 
     fn remove_session(&self, session_id: &usize) {
+        self.with_ui_connection(|ui_connection| {
+            ui_connection.on_disconnected(&session_id);
+        });
         self.sessions.write().unwrap().remove(session_id);
         self.saved_msgs.lock().unwrap().remove(session_id);
         self.not_seen.write().unwrap().retain(|x| x != session_id);
@@ -172,9 +175,9 @@ impl SessionManager {
     async fn send_msg(&self, session_id: usize, session: &mut Session, buff: &[u8], aborted: &mut bool, file_ack_sender: Option<&Sender<bool>>) -> Result<(), SessionError> {
         session.encrypt_and_send(&buff).await?;
         if buff[0] == protocol::Headers::ACCEPT_LARGE_FILE {
-            self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_transfer.as_mut().unwrap().state = FileState::ACCEPTED;
+            self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_download.as_mut().unwrap().state = FileState::ACCEPTED;
         } else if buff[0] == protocol::Headers::ABORT_FILE_TRANSFER {
-            self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_transfer = None;
+            self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_download = None;
             *aborted = true;
             if let Some(sender) = file_ack_sender {
                 if let Err(e) = sender.send(false).await {
@@ -234,86 +237,95 @@ impl SessionManager {
                                     }
                                 }
                                 protocol::Headers::ASK_LARGE_FILE => {
-                                    let file_size = u64::from_be_bytes(buffer[1..9].try_into().unwrap());
-                                    match from_utf8(&buffer[9..]) {
-                                        Ok(file_name) => {
-                                            let file_name = sanitize_filename::sanitize(file_name);
-                                            let download_dir = UserDirs::new().unwrap().download_dir;
-                                            self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_transfer = Some(LargeFileDownload{
-                                                file_name: file_name.clone(),
-                                                download_location: download_dir.to_str().unwrap().to_string(),
-                                                file_size,
-                                                state: FileState::ASKING,
-                                                transferred: 0,
-                                                last_chunk: get_unix_timestamp(),
-                                            });
-                                            let mut test_file_path = download_dir.join(&file_name);
-                                            let mut n = 1;
-                                            while test_file_path.exists() {
-                                                let splits: Vec<&str> = file_name.split('.').collect();
-                                                test_file_path = download_dir.join(format!("{} ({}).{}", splits[..splits.len()-1].join("."), n, splits[splits.len()-1]));
-                                                n += 1;
+                                    if self.sessions.read().unwrap().get(&session_id).unwrap().file_download.is_none() { //don't accept 2 downloads at the same time
+                                        let file_size = u64::from_be_bytes(buffer[1..9].try_into().unwrap());
+                                        match from_utf8(&buffer[9..]) {
+                                            Ok(file_name) => {
+                                                let file_name = sanitize_filename::sanitize(file_name);
+                                                let download_dir = UserDirs::new().unwrap().download_dir;
+                                                self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_download = Some(LargeFileDownload{
+                                                    file_name: file_name.clone(),
+                                                    download_location: download_dir.to_str().unwrap().to_string(),
+                                                    file_size,
+                                                    state: FileState::ASKING,
+                                                    transferred: 0,
+                                                    last_chunk: get_unix_timestamp(),
+                                                });
+                                                local_file_path = Some(get_not_used_path(&file_name, &download_dir));
+                                                self.with_ui_connection(|ui_connection| {
+                                                    ui_connection.on_ask_large_file(&session_id, file_size, &file_name, download_dir.to_str().unwrap());
+                                                })
                                             }
-                                            local_file_path = Some(test_file_path);
-                                            self.with_ui_connection(|ui_connection| {
-                                                ui_connection.on_ask_large_file(&session_id, file_size, &file_name, download_dir.to_str().unwrap());
-                                            })
+                                            Err(e) => print_error!(e),
                                         }
-                                        Err(e) => print_error!(e),
+                                    } else if let Err(e) = session.encrypt_and_send(&[protocol::Headers::ABORT_FILE_TRANSFER]).await {
+                                        print_error!(e);
+                                        break;
                                     }
                                 }
                                 protocol::Headers::LARGE_FILE_CHUNK => {
-                                    let file_transfer_opt = {
-                                        self.sessions.read().unwrap().get(&session_id).unwrap().file_transfer.clone()
+                                    let state = {
+                                        let sessions = self.sessions.read().unwrap();
+                                        match sessions.get(&session_id).unwrap().file_download.as_ref() {
+                                            Some(file_transfer) => Some(file_transfer.state),
+                                            None => None
+                                        }
                                     };
-                                    if let Some(file_transfer) = file_transfer_opt {
-                                        if file_transfer.state == FileState::ACCEPTED || file_transfer.state == FileState::TRANSFERRING {
-                                            if local_file_handle.is_none() {
-                                                if let Some(file_path) = local_file_path.as_ref() {
-                                                    match OpenOptions::new().append(true).create(true).open(file_path) {
-                                                        Ok(file) => local_file_handle = Some(file),
-                                                        Err(e) => print_error!(e)
-                                                    }
-                                                }
-                                            }
-                                            let mut is_success = false;
-                                            if let Some(file_handle) = local_file_handle.as_mut() {
-                                                match file_handle.write_all(&buffer[1..]) {
-                                                    Ok(_) => {
-                                                        let chunk_size = (buffer.len()-1) as u64;
-                                                        {
-                                                            let mut sessions = self.sessions.write().unwrap();
-                                                            let file_transfer = sessions.get_mut(&session_id).unwrap().file_transfer.as_mut().unwrap();
-                                                            file_transfer.last_chunk = get_unix_timestamp();
-                                                            file_transfer.transferred += chunk_size;
-                                                            if file_transfer.transferred >= file_transfer.file_size { //we downloaded all the file
-                                                                sessions.get_mut(&session_id).unwrap().file_transfer = None;
-                                                                local_file_path = None;
-                                                                local_file_handle = None;
-                                                            } else if file_transfer.state != FileState::TRANSFERRING {
-                                                                file_transfer.state = FileState::TRANSFERRING;
-                                                            }
-                                                        }
-                                                        if let Err(e) = session.encrypt_and_send(&[protocol::Headers::ACK_CHUNK]).await {
-                                                            print_error!(e);
-                                                            break;
-                                                        }
-                                                        self.with_ui_connection(|ui_connection| {
-                                                            ui_connection.inc_file_transfer(&session_id, chunk_size);
-                                                        });
-                                                        is_success = true;
+                                    let mut should_accept_chunk = false;
+                                    if let Some(state) = state {
+                                        if state == FileState::ACCEPTED {
+                                            if let Some(file_path) = local_file_path.as_ref() {
+                                                match OpenOptions::new().append(true).create(true).open(file_path) {
+                                                    Ok(file) => {
+                                                        local_file_handle = Some(file);
+                                                        let mut sessions = self.sessions.write().unwrap();
+                                                        let file_transfer = sessions.get_mut(&session_id).unwrap().file_download.as_mut().unwrap();
+                                                        file_transfer.state = FileState::TRANSFERRING;
+                                                        should_accept_chunk = true;
                                                     }
                                                     Err(e) => print_error!(e)
                                                 }
                                             }
-                                            if !is_success {
-                                                self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_transfer = None;
-                                                local_file_path = None;
-                                                local_file_handle = None;
-                                                if let Err(e) = session.encrypt_and_send(&[protocol::Headers::ABORT_FILE_TRANSFER]).await {
-                                                    print_error!(e);
-                                                    break;
+                                        } else if state == FileState::TRANSFERRING {
+                                            should_accept_chunk = true;
+                                        }
+                                    }
+                                    if should_accept_chunk {
+                                        let mut is_success = false;
+                                        if let Some(file_handle) = local_file_handle.as_mut() {
+                                            match file_handle.write_all(&buffer[1..]) {
+                                                Ok(_) => {
+                                                    let chunk_size = (buffer.len()-1) as u64;
+                                                    {
+                                                        let mut sessions = self.sessions.write().unwrap();
+                                                        let file_transfer = sessions.get_mut(&session_id).unwrap().file_download.as_mut().unwrap();
+                                                        file_transfer.last_chunk = get_unix_timestamp();
+                                                        file_transfer.transferred += chunk_size;
+                                                        if file_transfer.transferred >= file_transfer.file_size { //we downloaded all the file
+                                                            sessions.get_mut(&session_id).unwrap().file_download = None;
+                                                            local_file_path = None;
+                                                            local_file_handle = None;
+                                                        }
+                                                    }
+                                                    if let Err(e) = session.encrypt_and_send(&[protocol::Headers::ACK_CHUNK]).await {
+                                                        print_error!(e);
+                                                        break;
+                                                    }
+                                                    self.with_ui_connection(|ui_connection| {
+                                                        ui_connection.inc_file_transfer(&session_id, chunk_size);
+                                                    });
+                                                    is_success = true;
                                                 }
+                                                Err(e) => print_error!(e)
+                                            }
+                                        }
+                                        if !is_success {
+                                            self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_download = None;
+                                            local_file_path = None;
+                                            local_file_handle = None;
+                                            if let Err(e) = session.encrypt_and_send(&[protocol::Headers::ABORT_FILE_TRANSFER]).await {
+                                                print_error!(e);
+                                                break;
                                             }
                                         }
                                     }
@@ -337,7 +349,7 @@ impl SessionManager {
                                         }
                                         aborted = true;
                                     }
-                                    self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_transfer = None;
+                                    self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_download = None;
                                     local_file_path = None;
                                     local_file_handle = None;
                                     self.with_ui_connection(|ui_connection| {
@@ -383,12 +395,9 @@ impl SessionManager {
                             }
                         }
                         Err(e) => {
-                            if e != SessionError::BrokenPipe && e != SessionError::ConnectionReset {
+                            if e != SessionError::BrokenPipe && e != SessionError::ConnectionReset && e != SessionError::BufferTooLarge {
                                 print_error!(e);
                             }
-                            self.with_ui_connection(|ui_connection| {
-                                ui_connection.on_disconnected(&session_id);
-                            });
                             break;
                         }
                     }
@@ -488,7 +497,7 @@ impl SessionManager {
                             outgoing,
                             peer_public_key,
                             sender: sender,
-                            file_transfer: None,
+                            file_download: None,
                         };
                         let mut session_id = None;
                         for (i, contact) in session_manager.loaded_contacts.read().unwrap().iter() {
@@ -610,7 +619,9 @@ impl SessionManager {
         let result = Identity::remove_contact(&loaded_contacts.get(&session_id).unwrap().uuid);
         if result.is_ok() {
             if let Some(contact) = loaded_contacts.remove(&session_id) {
-                self.sessions.write().unwrap().get_mut(&session_id).unwrap().name = contact.name;
+                if let Some(session) = self.sessions.write().unwrap().get_mut(&session_id) {
+                    session.name = contact.name;
+                }
             }
             self.last_loaded_msg_offsets.write().unwrap().remove(&session_id);
         }

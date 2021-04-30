@@ -1,15 +1,15 @@
 pub struct Headers;
 
 impl Headers {
-    pub const MESSAGE: u8 = 0x01;
-    pub const ASK_NAME: u8 = 0x02;
-    pub const TELL_NAME: u8 = 0x03;
-    pub const FILE: u8 = 0x04;
-    pub const ASK_LARGE_FILE: u8 = 0x05;
-    pub const ACCEPT_LARGE_FILE: u8 = 0x06;
-    pub const LARGE_FILE_CHUNK: u8 = 0x07;
-    pub const ACK_CHUNK: u8 = 0x08;
-    pub const ABORT_FILE_TRANSFER: u8 = 0x09;
+    pub const MESSAGE: u8 = 0x00;
+    pub const ASK_NAME: u8 = 0x01;
+    pub const TELL_NAME: u8 = 0x02;
+    pub const FILE: u8 = 0x03;
+    pub const ASK_LARGE_FILE: u8 = 0x04;
+    pub const ACCEPT_LARGE_FILE: u8 = 0x05;
+    pub const LARGE_FILE_CHUNK: u8 = 0x06;
+    pub const ACK_CHUNK: u8 = 0x07;
+    pub const ABORT_FILE_TRANSFER: u8 = 0x08;
 }
 
 pub fn new_message(message: String) -> Vec<u8> {

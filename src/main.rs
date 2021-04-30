@@ -98,7 +98,7 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
         load_msgs(session_manager.clone(), &mut ui_connection, &contact.0);
     });
     session_manager.sessions.read().unwrap().iter().for_each(|session| {
-        ui_connection.on_new_session(session.0, &session.1.name, session.1.outgoing, session.1.file_transfer.as_ref());
+        ui_connection.on_new_session(session.0, &session.1.name, session.1.outgoing, session.1.file_download.as_ref());
     });
     let not_seen = session_manager.list_not_seen();
     if not_seen.len() > 0 {
