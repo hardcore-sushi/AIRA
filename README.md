@@ -26,6 +26,16 @@ AIRA is still under developement and is not ready for production usage yet. Not 
 - Web frontend that directly runs in browser
 - Free/Libre and Open Source
 
+# Download
+AIRA releases are availables in the "Release" section. All files MUST be signed with my PGP key. Don't execute them if the verification fails.
+
+To download my key:
+`gpg --keyserver hkp://pool.sks-keyservers.net --recv-keys 007F84120107191E` \
+Fingerprint: `BD56 2147 9E7B 74D3 6A40  5BE8 007F 8412 0107 191E` \
+Email: `Hardcore Sushi <hardcore.sushi@disroot.org>`
+
+Then, verify release file: `gpg --verify aira.elf.asc aira.elf`
+
 # Build
 ### Install Rust
 ```
@@ -34,6 +44,10 @@ curl --proto '=https' --tlsv1.3 -sSf https://sh.rustup.rs | sh
 ### Download AIRA
 ```
 git clone --depth=1 https://forge.chapril.org/hardcoresushi/AIRA.git && cd AIRA
+```
+### Verify commit
+```
+git verify-commit HEAD
 ```
 ### Build AIRA
 ```
