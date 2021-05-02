@@ -1,9 +1,9 @@
-use std::net::TcpStream;
+use std::net::{IpAddr, TcpStream};
 use tungstenite::{WebSocket, protocol::Role, Message};
 use crate::{protocol, session_manager::LargeFileDownload};
 
 mod ui_messages {
-    use std::{iter::FromIterator, str::from_utf8};
+    use std::{iter::FromIterator, net::IpAddr, str::from_utf8};
     use tungstenite::Message;
     use uuid::Uuid;
     use crate::{print_error, session_manager::{protocol, LargeFileDownload, FileState}, utils::to_uuid_bytes};
@@ -27,8 +27,8 @@ mod ui_messages {
     pub fn on_disconnected(session_id: &usize) -> Message {
         simple_event("disconnected", session_id)
     }
-    pub fn on_new_session(session_id: &usize, name: &str, outgoing: bool) -> Message {
-        Message::from(format!("new_session {} {} {}", session_id, outgoing, name))
+    pub fn on_new_session(session_id: &usize, name: &str, outgoing: bool, fingerprint: &str, ip: IpAddr) -> Message {
+        Message::from(format!("new_session {} {} {} {} {}", session_id, outgoing, fingerprint, ip, name))
     }
     pub fn on_file_received(session_id: &usize, buffer: &[u8]) -> Option<Message> {
         let uuid = Uuid::from_bytes(to_uuid_bytes(&buffer[1..17])?);
@@ -98,11 +98,8 @@ mod ui_messages {
     pub fn on_name_told(session_id: &usize, name: &str) -> Message {
         Message::from(format!("name_told {} {}", session_id, name))
     }
-    pub fn set_as_contact(session_id: usize, name: &str, verified: bool) -> Message {
-        Message::from(format!("is_contact {} {} {}", session_id, verified, name))
-    }
-    pub fn fingerprints(local: &str, peer: &str) -> Message {
-        Message::from(format!("fingerprints {} {}", local, peer))
+    pub fn set_as_contact(session_id: usize, name: &str, verified: bool, fingerprint: &str) -> Message {
+        Message::from(format!("is_contact {} {} {} {}", session_id, verified, fingerprint, name))
     }
     pub fn set_name(new_name: &str) -> Message {
         Message::from(format!("set_name {}", new_name))
@@ -156,8 +153,8 @@ impl UiConnection {
             _ => {}
         }
     }
-    pub fn on_new_session(&mut self, session_id: &usize, name: &str, outgoing: bool, file_transfer: Option<&LargeFileDownload>) {
-        self.write_message(ui_messages::on_new_session(session_id, name, outgoing));
+    pub fn on_new_session(&mut self, session_id: &usize, name: &str, outgoing: bool, fingerprint: &str, ip: IpAddr, file_transfer: Option<&LargeFileDownload>) {
+        self.write_message(ui_messages::on_new_session(session_id, name, outgoing, fingerprint, ip));
         if let Some(file_transfer) = file_transfer {
             self.write_message(ui_messages::new_file_transfer(session_id, file_transfer));
         }
@@ -172,8 +169,8 @@ impl UiConnection {
     pub fn inc_file_transfer(&mut self, session_id: &usize, chunk_size: u64) {
         self.write_message(ui_messages::inc_file_transfer(session_id, chunk_size));
     }
-    pub fn set_as_contact(&mut self, session_id: usize, name: &str, verified: bool) {
-        self.write_message(ui_messages::set_as_contact(session_id, name, verified));
+    pub fn set_as_contact(&mut self, session_id: usize, name: &str, verified: bool, fingerprint: &str) {
+        self.write_message(ui_messages::set_as_contact(session_id, name, verified, fingerprint));
     }
     pub fn load_msgs(&mut self, session_id: &usize, msgs: &Vec<(bool, Vec<u8>)>) {
         msgs.into_iter().rev().for_each(|msg| {
@@ -185,9 +182,6 @@ impl UiConnection {
     }
     pub fn set_not_seen(&mut self, session_ids: Vec<usize>) {
         self.write_message(ui_messages::set_not_seen(session_ids));
-    }
-    pub fn fingerprints(&mut self, local: &str, peer: &str) {
-        self.write_message(ui_messages::fingerprints(local, peer));
     }
     pub fn set_name(&mut self, new_name: &str) {
         self.write_message(ui_messages::set_name(new_name));

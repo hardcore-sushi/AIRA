@@ -1,7 +1,7 @@
 "use strict";
 
 const ENTER_KEY_CODE = 13;
-let identity_name = undefined;
+let identityName = undefined;
 let socket = null;
 let notificationAllowed = false;
 let currentSessionId = -1;
@@ -60,7 +60,7 @@ document.getElementById("delete_conversation").onclick = function() {
 }
 document.getElementById("add_contact").onclick = function() {
     socket.send("contact "+currentSessionId+" "+sessionsData.get(currentSessionId).name);
-    sessionsData.get(currentSessionId).is_contact = true;
+    sessionsData.get(currentSessionId).isContact = true;
     displayHeader();
     displaySessions();
 }
@@ -78,9 +78,9 @@ document.getElementById("remove_contact").onclick = function() {
     button.onclick = function() {
         socket.send("uncontact "+currentSessionId);
         let session = sessionsData.get(currentSessionId);
-        session.is_contact = false;
-        session.is_verified = false;
-        if (!session.is_online) {
+        session.isContact = false;
+        session.isVerified = false;
+        if (!session.isOnline) {
             sessionsData.delete(currentSessionId);
             msgHistory.get(currentSessionId).length = 0;
         }
@@ -93,7 +93,44 @@ document.getElementById("remove_contact").onclick = function() {
     showPopup(mainDiv);
 }
 document.getElementById("verify").onclick = function() {
-    socket.send("fingerprints "+currentSessionId);
+    let session = sessionsData.get(currentSessionId);
+    if (typeof session !== "undefined") {
+        let mainDiv = document.createElement("div");
+        mainDiv.appendChild(generatePopupWarningTitle());
+        let instructions = document.createElement("p");
+        instructions.textContent = "Compare the following fingerprints by a trusted way of communication (such as real life) and be sure they match.";
+        mainDiv.appendChild(instructions);
+        let p_local = document.createElement("p");
+        p_local.textContent = "Local fingerprint:";
+        mainDiv.appendChild(p_local);
+        let pre_local = document.createElement("pre");
+        pre_local.textContent = beautifyFingerprint(identityFingerprint);
+        mainDiv.appendChild(pre_local);
+        let p_peer = document.createElement("p");
+        p_peer.textContent = "Peer fingerprint:";
+        mainDiv.appendChild(p_peer);
+        let pre_peer = document.createElement("pre");
+        pre_peer.textContent = beautifyFingerprint(session.fingerprint);
+        mainDiv.appendChild(pre_peer);
+        let buttonRow = document.createElement("div");
+        buttonRow.classList.add("button_row");
+        let verifyButton = document.createElement("button");
+        verifyButton.textContent = "They match";
+        verifyButton.onclick = function() {
+            socket.send("verify "+currentSessionId);
+            sessionsData.get(currentSessionId).isVerified = true;
+            removePopup();
+            displayHeader();
+            displaySessions();
+        };
+        buttonRow.appendChild(verifyButton);
+        let cancelButton = document.createElement("button");
+        cancelButton.textContent = "They don't match";
+        cancelButton.onclick = removePopup;
+        buttonRow.appendChild(cancelButton);
+        mainDiv.appendChild(buttonRow);
+        showPopup(mainDiv);
+    }
 }
 document.getElementById("logout").onclick = function() {
     let mainDiv = document.createElement("div");
@@ -141,125 +178,9 @@ document.getElementById("attach_file").onchange = function(event) {
 document.getElementById("file_cancel").onclick = function() {
     socket.send("abort "+currentSessionId);
 }
-
-//source: https://stackoverflow.com/a/14919494
-function humanFileSize(bytes, dp=1) {
-    const thresh = 1000;
-    if (Math.abs(bytes) < thresh) {
-      return bytes + ' B';
-    }
-    const units = ['kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
-    let u = -1;
-    const r = 10**dp;
-    do {
-      bytes /= thresh;
-      ++u;
-    } while (Math.round(Math.abs(bytes) * r) / r >= thresh && u < units.length - 1);
-    return bytes.toFixed(dp) + ' ' + units[u];
-}
-//source: https://www.w3schools.com/js/js_cookies.asp
-function getCookie(cname) {
-    var name = cname + "=";
-    var decodedCookie = decodeURIComponent(document.cookie);
-    var ca = decodedCookie.split(';');
-    for(var i = 0; i <ca.length; i++) {
-        var c = ca[i];
-        while (c.charAt(0) == ' ') {
-            c = c.substring(1);
-        }
-        if (c.indexOf(name) == 0) {
-            return c.substring(name.length, c.length);
-        }
-    }
-    return "";
-}
-
-socket = new WebSocket("ws://"+location.hostname+":"+websocketPort+"/ws");
-socket.onopen = function() {
-    console.log("Connected");
-    socket.send(getCookie("aira_auth")); //authenticating websocket connection
-    window.onfocus = function() {
-        if (currentSessionId != -1) {
-            socket.send("set_seen "+currentSessionId);
-        }
-    }
-    if (Notification.permission === "granted") {
-        notificationAllowed = true;
-    } else if (Notification.permission !== "denied") {
-        Notification.requestPermission().then(function (permission) {
-            if (permission === "granted") {
-                notificationAllowed = true;
-            }
-        });
-    }
-};
-socket.onmessage = function(msg) {
-    if (typeof msg.data == "string") {
-        console.log("Message: "+msg.data);
-        let args = msg.data.split(" ");
-        switch (args[0]) {
-            case "disconnected":
-                onDisconnected(args[1]);
-                break;
-            case "new_session":
-                onNewSession(args[1], args[2] === "true", msg.data.slice(args[0].length+args[1].length+args[2].length+3));
-                break;
-            case "new_message":
-                onNewMessage(args[1], args[2] === "true", msg.data.slice(args[0].length+args[1].length+args[2].length+3));
-                break;
-            case "file":
-                onFileReceived(args[1], args[2], msg.data.slice(args[0].length+args[1].length+args[2].length+3));
-                break;
-            case "file_transfer":
-                onNewFileTransfer(args[1], args[2], args[3], args[4], args[5], args[6]);
-                break;
-            case "ask_large_file":
-                onAskLargeFile(args[1], args[2], args[3], args[4]);
-                break;
-            case "file_accepted":
-                onFileAccepted(args[1]);
-                break;
-            case "aborted":
-                onFileAborted(args[1]);
-                break;
-            case "inc_file_transfer":
-                onIncFileTransfer(args[1], parseInt(args[2]));
-                break;
-            case "load_sent_msg":
-                onMsgLoad(args[1], args[2] === "true", msg.data.slice(args[0].length+args[1].length+args[2].length+3));
-                break;
-            case "load_sent_file":
-                onFileLoad(args[1], args[2] === "true", args[3], msg.data.slice(args[0].length+args[1].length+args[2].length+args[3].length+4));
-                break;
-            case "name_told":
-                onNameTold(args[1], msg.data.slice(args[0].length+args[1].length+2));
-                break;
-            case "is_contact":
-                onIsContact(args[1], args[2] === "true", msg.data.slice(args[0].length+args[1].length+args[2].length+3));
-                break;
-            case "not_seen":
-                setNotSeen(msg.data.slice(args[0].length+1));
-                break;
-            case "fingerprints":
-                onFingerprints(args[1], args[2]);
-                break;
-            case "set_name":
-                onNameSet(msg.data.slice(args[0].length+1));
-                break;
-            case "password_changed":
-                onPasswordChanged(args[1] === "true", args[2] === "true");
-                break;
-            case "logout":
-                logout();
-        }
-    }
-}
-socket.onclose = function() {
-    console.log("Disconnected");
-}
 let msg_log = document.getElementById("msg_log");
 msg_log.onscroll = function() {
-    if (sessionsData.get(currentSessionId).is_contact) {
+    if (sessionsData.get(currentSessionId).isContact) {
         if (msg_log.scrollTop < 30) {
             socket.send("load_msgs "+currentSessionId);
         }
@@ -268,14 +189,18 @@ msg_log.onscroll = function() {
 let profile_div = document.querySelector("#me>div");
 profile_div.onclick = function() {
     let mainDiv = document.createElement("div");
-    let avatar = generateAvatar(identity_name);
+    let avatar = generateAvatar(identityName);
     mainDiv.appendChild(avatar);
+    let fingerprint = document.createElement("pre");
+    fingerprint.id = "identity_fingerprint";
+    fingerprint.textContent = beautifyFingerprint(identityFingerprint);
+    mainDiv.appendChild(fingerprint);
     let sectionName = document.createElement("section");
     sectionName.textContent = "Name:";
     let inputName = document.createElement("input");
     inputName.id = "new_name";
     inputName.type = "text";
-    inputName.value = identity_name;
+    inputName.value = identityName;
     sectionName.appendChild(inputName);
     let saveNameButton = document.createElement("button");
     saveNameButton.textContent = "Save";
@@ -370,21 +295,167 @@ profile_div.onclick = function() {
     mainDiv.appendChild(sectionDelete);
     showPopup(mainDiv);
 }
+let chatHeader = document.getElementById("chat_header");
+chatHeader.children[0].onclick = function() {
+    let session = sessionsData.get(currentSessionId);
+    if (typeof session !== "undefined") {
+        let mainDiv = document.createElement("div");
+        mainDiv.classList.add("session_info");
+        mainDiv.appendChild(generateAvatar(session.name));
+        let h2 = document.createElement("h2");
+        h2.textContent = session.name;
+        mainDiv.appendChild(h2);
+        let pFingerprint = document.createElement("p");
+        pFingerprint.textContent = "Fingerprint:";
+        mainDiv.appendChild(pFingerprint);
+        let pre = document.createElement("pre");
+        pre.textContent = ' '+beautifyFingerprint(session.fingerprint);
+        mainDiv.appendChild(pre);
+        if (session.isOnline) {
+            let pIp = document.createElement("p");
+            pIp.textContent = "IP: "+session.ip;
+            mainDiv.appendChild(pIp);
+            let pConnection = document.createElement("p");
+            pConnection.textContent = "Connection: ";
+            if (session.outgoing) {
+                pConnection.textContent += "outgoing";
+            } else {
+                pConnection.textContent += "incomming";
+            }
+            mainDiv.appendChild(pConnection);
+        }
+        showPopup(mainDiv);
+    }
+}
 document.querySelector("#refresher button").onclick = function() {
     socket.send("refresh");
 }
 
-function onNewSession(sessionId, outgoing, name) {
+//source: https://stackoverflow.com/a/14919494
+function humanFileSize(bytes, dp=1) {
+    const thresh = 1000;
+    if (Math.abs(bytes) < thresh) {
+      return bytes + ' B';
+    }
+    const units = ['kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+    let u = -1;
+    const r = 10**dp;
+    do {
+      bytes /= thresh;
+      ++u;
+    } while (Math.round(Math.abs(bytes) * r) / r >= thresh && u < units.length - 1);
+    return bytes.toFixed(dp) + ' ' + units[u];
+}
+//source: https://www.w3schools.com/js/js_cookies.asp
+function getCookie(cname) {
+    var name = cname + "=";
+    var decodedCookie = decodeURIComponent(document.cookie);
+    var ca = decodedCookie.split(';');
+    for(var i = 0; i <ca.length; i++) {
+        var c = ca[i];
+        while (c.charAt(0) == ' ') {
+            c = c.substring(1);
+        }
+        if (c.indexOf(name) == 0) {
+            return c.substring(name.length, c.length);
+        }
+    }
+    return "";
+}
+
+socket = new WebSocket("ws://"+location.hostname+":"+websocketPort+"/ws");
+socket.onopen = function() {
+    console.log("Connected");
+    socket.send(getCookie("aira_auth")); //authenticating websocket connection
+    window.onfocus = function() {
+        if (currentSessionId != -1) {
+            socket.send("set_seen "+currentSessionId);
+        }
+    }
+    if (Notification.permission === "granted") {
+        notificationAllowed = true;
+    } else if (Notification.permission !== "denied") {
+        Notification.requestPermission().then(function (permission) {
+            if (permission === "granted") {
+                notificationAllowed = true;
+            }
+        });
+    }
+};
+socket.onmessage = function(msg) {
+    if (typeof msg.data == "string") {
+        console.log("Message: "+msg.data);
+        let args = msg.data.split(" ");
+        switch (args[0]) {
+            case "disconnected":
+                onDisconnected(args[1]);
+                break;
+            case "new_session":
+                onNewSession(args[1], args[2] === "true", args[3], args[4], msg.data.slice(args[0].length+args[1].length+args[2].length+args[3].length+args[4].length+5));
+                break;
+            case "new_message":
+                onNewMessage(args[1], args[2] === "true", msg.data.slice(args[0].length+args[1].length+args[2].length+3));
+                break;
+            case "file":
+                onFileReceived(args[1], args[2], msg.data.slice(args[0].length+args[1].length+args[2].length+3));
+                break;
+            case "file_transfer":
+                onNewFileTransfer(args[1], args[2], args[3], args[4], args[5], args[6]);
+                break;
+            case "ask_large_file":
+                onAskLargeFile(args[1], args[2], args[3], args[4]);
+                break;
+            case "file_accepted":
+                onFileAccepted(args[1]);
+                break;
+            case "aborted":
+                onFileAborted(args[1]);
+                break;
+            case "inc_file_transfer":
+                onIncFileTransfer(args[1], parseInt(args[2]));
+                break;
+            case "load_sent_msg":
+                onMsgLoad(args[1], args[2] === "true", msg.data.slice(args[0].length+args[1].length+args[2].length+3));
+                break;
+            case "load_sent_file":
+                onFileLoad(args[1], args[2] === "true", args[3], msg.data.slice(args[0].length+args[1].length+args[2].length+args[3].length+4));
+                break;
+            case "name_told":
+                onNameTold(args[1], msg.data.slice(args[0].length+args[1].length+2));
+                break;
+            case "is_contact":
+                onIsContact(args[1], args[2] === "true", args[3], msg.data.slice(args[0].length+args[1].length+args[2].length+args[3].length+4));
+                break;
+            case "not_seen":
+                setNotSeen(msg.data.slice(args[0].length+1));
+                break;
+            case "set_name":
+                onNameSet(msg.data.slice(args[0].length+1));
+                break;
+            case "password_changed":
+                onPasswordChanged(args[1] === "true", args[2] === "true");
+                break;
+            case "logout":
+                logout();
+        }
+    }
+}
+socket.onclose = function() {
+    console.log("Disconnected");
+}
+
+function onNewSession(sessionId, outgoing, fingerprint, ip, name) {
     if (sessionsData.has(sessionId)) {
         let session = sessionsData.get(sessionId);
-        session.is_online = true;
+        session.isOnline = true;
         session.outgoing = outgoing;
+        session.ip = ip;
         displaySessions();
         if (currentSessionId == sessionId) {
             displayChatBottom();
         }
     } else {
-        addSession(sessionId, name, outgoing, false, false, true);
+        addSession(sessionId, name, outgoing, fingerprint, ip, false, false, true);
     }
 }
 function onNameTold(sessionId, name) {
@@ -401,14 +472,14 @@ function setNotSeen(str_sessionIds) {
     }
     displaySessions();
 }
-function onIsContact(sessionId, verified, name) {
+function onIsContact(sessionId, verified, fingerprint, name) {
     if (sessionsData.has(sessionId)) {
         let session = sessionsData.get(sessionId);
-        session.is_contact = true;
-        session.is_verified = verified;
+        session.isContact = true;
+        session.isVerified = verified;
         onNameTold(sessionId, name);
     } else {
-        addSession(sessionId, name, true, true, verified, false);
+        addSession(sessionId, name, undefined, fingerprint, undefined, true, verified, false);
     }
 }
 function onMsgOrFileReceived(sessionId, outgoing, body) {
@@ -556,62 +627,19 @@ function onFileLoad(sessionId, outgoing, uuid, fileName) {
 function onDisconnected(sessionId) {
     pendingFiles.delete(sessionId);
     let session = sessionsData.get(sessionId);
-    if (session.is_contact) {
-        session.is_online = false;
+    if (session.isContact) {
+        session.isOnline = false;
     } else {
         sessionsData.delete(sessionId);
     }
     if (currentSessionId == sessionId) {
         displayChatBottom();
     }
-    if (currentSessionId == sessionId && !session.is_contact) {
+    if (currentSessionId == sessionId && !session.isContact) {
         currentSessionId = -1;
-        document.getElementById("chat_header").classList.add("offline");
+        chatHeader.classList.add("offline");
     }
     displaySessions();
-}
-function onFingerprints(local, peer) {
-    let beautifyFingerprints = function(f) {
-        for (let i=4; i<f.length; i+=5) {
-            f = f.slice(0, i)+" "+f.slice(i);
-        }
-        return f;
-    };
-    let mainDiv = document.createElement("div");
-    mainDiv.appendChild(generatePopupWarningTitle());
-    let instructions = document.createElement("p");
-    instructions.textContent = "Compare the following fingerprints by a trusted way of communication (such as real life) and be sure they match.";
-    mainDiv.appendChild(instructions);
-    let p_local = document.createElement("p");
-    p_local.textContent = "Local fingerprint:";
-    mainDiv.appendChild(p_local);
-    let pre_local = document.createElement("pre");
-    pre_local.textContent = beautifyFingerprints(local);
-    mainDiv.appendChild(pre_local);
-    let p_peer = document.createElement("p");
-    p_peer.textContent = "Peer fingerprint:";
-    mainDiv.appendChild(p_peer);
-    let pre_peer = document.createElement("pre");
-    pre_peer.textContent = beautifyFingerprints(peer);
-    mainDiv.appendChild(pre_peer);
-    let buttonRow = document.createElement("div");
-    buttonRow.classList.add("button_row");
-    let verifyButton = document.createElement("button");
-    verifyButton.textContent = "They match";
-    verifyButton.onclick = function() {
-        socket.send("verify "+currentSessionId);
-        sessionsData.get(currentSessionId).is_verified = true;
-        removePopup();
-        displayHeader();
-        displaySessions();
-    };
-    buttonRow.appendChild(verifyButton);
-    let cancelButton = document.createElement("button");
-    cancelButton.textContent = "They don't match";
-    cancelButton.onclick = removePopup;
-    buttonRow.appendChild(cancelButton);
-    mainDiv.appendChild(buttonRow);
-    showPopup(mainDiv);
 }
 function onFileReceived(sessionId, uuid, file_name) {
     msgHistory.get(sessionId).push([false, true, [uuid, file_name]]);
@@ -623,15 +651,15 @@ function onFileSent(sessionId, uuid, file_name) {
         dislayHistory();
     }
 }
-function onNameSet(new_name) {
+function onNameSet(newName) {
     removePopup();
-    identity_name = new_name;
+    identityName = newName;
     displayProfile();
 }
-function onPasswordChanged(success, is_protected) {
+function onPasswordChanged(success, isProtected) {
     if (success) {
         removePopup();
-        isIdentityProtected = is_protected;
+        isIdentityProtected = isProtected;
     } else {
         let input = document.querySelector("input[type=\"password\"]");
         input.value = "";
@@ -640,29 +668,37 @@ function onPasswordChanged(success, is_protected) {
     }
 }
 
-function addSession(sessionId, name, outgoing, is_contact, is_verified, is_online) {
+function beautifyFingerprint(f) {
+    for (let i=4; i<f.length; i+=5) {
+        f = f.slice(0, i)+" "+f.slice(i);
+    }
+    return f;
+};
+function addSession(sessionId, name, outgoing, fingerprint, ip, isContact, isVerified, isOnline) {
     sessionsData.set(sessionId, {
         "name": name,
         "outgoing": outgoing,
-        "is_contact": is_contact,
-        "is_verified": is_verified,
+        "fingerprint": fingerprint,
+        "ip": ip,
+        "isContact": isContact,
+        "isVerified": isVerified,
         "seen": true,
-        "is_online": is_online,
+        "isOnline": isOnline,
     });
     msgHistory.set(sessionId, []);
     displaySessions();
 }
 function displaySessions() {
-    let online_sessions = document.getElementById("online_sessions");
-    online_sessions.innerHTML = "";
-    let offline_sessions = document.getElementById("offline_sessions");
-    offline_sessions.innerHTML = "";
+    let onlineSessions = document.getElementById("online_sessions");
+    onlineSessions.innerHTML = "";
+    let offlineSessions = document.getElementById("offline_sessions");
+    offlineSessions.innerHTML = "";
     sessionsData.forEach(function (session, sessionId) {
-        let session_element = generateSession(sessionId, session);
-        if (session.is_online) {
-            online_sessions.appendChild(session_element);
+        let sessionElement = generateSession(sessionId, session);
+        if (session.isOnline) {
+            onlineSessions.appendChild(sessionElement);
         } else {
-            offline_sessions.appendChild(session_element)   ;
+            offlineSessions.appendChild(sessionElement)   ;
         }
     });
 }
@@ -671,26 +707,25 @@ function logout() {
 }
 function displayProfile() {
     profile_div.innerHTML = "";
-    profile_div.appendChild(generateAvatar(identity_name));
+    profile_div.appendChild(generateAvatar(identityName));
     let p = document.createElement("p");
-    p.textContent = identity_name;
+    p.textContent = identityName;
     profile_div.appendChild(p);
 }
 function displayHeader() {
-    let chat_header = document.getElementById("chat_header");
-    chat_header.children[0].innerHTML = "";
-    chat_header.className = 0;
+    chatHeader.children[0].innerHTML = "";
+    chatHeader.className = 0;
     let session = sessionsData.get(currentSessionId);
     if (typeof session === "undefined") {
-        chat_header.style.display = "none";
+        chatHeader.style.display = "none";
     } else {
-        chat_header.children[0].appendChild(generateAvatar(session.name));
-        chat_header.children[0].appendChild(generateName(session.name));
-        chat_header.style.display = "flex";
-        if (session.is_contact) {
-            chat_header.classList.add("is_contact");
-            if (session.is_verified) {
-                chat_header.classList.add("is_verified");
+        chatHeader.children[0].appendChild(generateAvatar(session.name));
+        chatHeader.children[0].appendChild(generateName(session.name));
+        chatHeader.style.display = "flex";
+        if (session.isContact) {
+            chatHeader.classList.add("is_contact");
+            if (session.isVerified) {
+                chatHeader.classList.add("is_verified");
             }
         }
     }
@@ -742,10 +777,10 @@ function generateSession(sessionId, session) {
     } else {
         li.classList.add("incomming");
     }
-    if (session.is_contact) {
+    if (session.isContact) {
         li.classList.add("is_contact");
     }
-    if (session.is_verified) {
+    if (session.isVerified) {
         li.classList.add("is_verified");
     }
     if (!session.seen) {
@@ -814,7 +849,7 @@ function displayChatBottom(speed = undefined) {
     if (typeof session === "undefined") {
         msgBox.removeAttribute("style");
     } else {
-        if (session.is_online) {
+        if (session.isOnline) {
             msgBox.style.display = "flex";
         } else {
             msgBox.removeAttribute("style");
@@ -873,7 +908,7 @@ function dislayHistory(scrollToBottom = true) {
     msgHistory.get(currentSessionId).forEach(entry => {
         let name;
         if (entry[0]) { //outgoing msg
-            name = identity_name;
+            name = identityName;
         } else {
             name = sessionsData.get(currentSessionId).name;
         }

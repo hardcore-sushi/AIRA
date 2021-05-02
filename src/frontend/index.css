@@ -58,7 +58,7 @@ input[type="file"] {
     padding: 20px 70px;
     background-color: #2B2F31;
     border-radius: 10px;
-    font-size: 1.3em;
+    font-size: 1.2em;
 }
 .popup_background {
     height: 100%;
@@ -117,6 +117,15 @@ input[type="file"] {
     display: inline-block;
     vertical-align: middle;
 }
+.popup .session_info h2 {
+    text-align: center;
+}
+.popup .session_info p:first-of-type, .popup .session_info pre {
+    display: inline-block;
+}
+.popup .session_info p:nth-of-type(2) {
+    margin-top: 0;
+}
 .button_row {
     display: flex;
     gap: 15px;
@@ -155,6 +164,13 @@ input[type="file"] {
     margin: 0;
     font-weight: bold;
     display: inline;
+}
+#me>div:hover p {
+    color: var(--accent);
+}
+#identity_fingerprint {
+    text-align: center;
+    margin-bottom: 0;
 }
 #left_panel ul:last-of-type, #msg_log {
     flex-grow: 1;
@@ -233,6 +249,10 @@ input[type="file"] {
     display: flex;
     align-items: center;
     flex-grow: 1;
+    cursor: pointer;
+}
+#chat_header>div:hover p {
+    color: var(--accent);
 }
 #chat_header>div>p {
     font-weight: bold;

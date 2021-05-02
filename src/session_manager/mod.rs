@@ -9,7 +9,7 @@ use session::Session;
 use ed25519_dalek::PUBLIC_KEY_LENGTH;
 use uuid::Uuid;
 use platform_dirs::UserDirs;
-use crate::{constants, discovery, identity::{Contact, Identity}, utils::{get_unix_timestamp, get_not_used_path}, print_error};
+use crate::{constants, crypto, discovery, identity::{Contact, Identity}, print_error, utils::{get_unix_timestamp, get_not_used_path}};
 use crate::ui_interface::UiConnection;
 
 #[derive(Display, Debug, PartialEq, Eq)]
@@ -19,7 +19,7 @@ pub enum SessionError {
     TransmissionCorrupted,
     BufferTooLarge,
     InvalidSessionId,
-    Unknown
+    Unknown,
 }
 
 enum SessionCommand {
@@ -55,7 +55,8 @@ pub struct LargeFileDownload {
 pub struct SessionData {
     pub name: String,
     pub outgoing: bool,
-    peer_public_key: [u8; PUBLIC_KEY_LENGTH],
+    pub peer_public_key: [u8; PUBLIC_KEY_LENGTH],
+    pub ip: IpAddr,
     sender: Sender<SessionCommand>,
     pub file_download: Option<LargeFileDownload>,
 }
@@ -68,7 +69,7 @@ pub struct SessionManager {
     loaded_contacts: RwLock<HashMap<usize, Contact>>,
     pub last_loaded_msg_offsets: RwLock<HashMap<usize, usize>>,
     pub saved_msgs: Mutex<HashMap<usize, Vec<(bool, Vec<u8>)>>>,
-    not_seen: RwLock<Vec<usize>>,
+    pub not_seen: RwLock<Vec<usize>>,
     mdns_service: Mutex<Option<Service>>,
     listener_stop_signal: Mutex<Option<Sender<()>>>,
 }
@@ -480,6 +481,7 @@ impl SessionManager {
                 }
             };
             if let Some(mut session) = session {
+                let ip = session.get_ip();
                 let mut is_contact = false;
                 let session_data = {
                     let mut sessions = session_manager.sessions.write().unwrap();
@@ -493,9 +495,10 @@ impl SessionManager {
                     if is_new_session && session_manager.is_identity_loaded() { //check if we didn't logged out during the handshake
                         let (sender, receiver) = mpsc::channel(32);
                         let session_data = SessionData{
-                            name: session.get_ip(),
+                            name: ip.to_string(),
                             outgoing,
                             peer_public_key,
+                            ip,
                             sender: sender,
                             file_download: None,
                         };
@@ -524,7 +527,7 @@ impl SessionManager {
                 if let Some(session_data) = session_data {
                     let (session_id, receiver) = session_data;
                     session_manager.with_ui_connection(|ui_connection| {
-                        ui_connection.on_new_session(&session_id, &session.get_ip(), outgoing, None);
+                        ui_connection.on_new_session(&session_id, &ip.to_string(), outgoing, &crypto::generate_fingerprint(&peer_public_key), ip, None);
                     });
                     if !is_contact {
                         match session.encrypt_and_send(&protocol::ask_name()).await {
@@ -567,22 +570,12 @@ impl SessionManager {
         Ok(())
     }
 
-    pub fn list_contacts(&self) -> Vec<(usize, String, bool)> {
-        self.loaded_contacts.read().unwrap().iter().map(|c| (*c.0, c.1.name.clone(), c.1.verified)).collect()
+    pub fn list_contacts(&self) -> Vec<(usize, String, bool, [u8; PUBLIC_KEY_LENGTH])> {
+        self.loaded_contacts.read().unwrap().iter().map(|c| (*c.0, c.1.name.clone(), c.1.verified, c.1.public_key)).collect()
     }
 
     pub fn get_saved_msgs(&self) -> HashMap<usize, Vec<(bool, Vec<u8>)>> {
         self.saved_msgs.lock().unwrap().clone()
-    }
-
-    pub fn get_peer_public_key(&self, session_id: &usize) -> Option<[u8; PUBLIC_KEY_LENGTH]> {
-        let sessions = self.sessions.read().unwrap();
-        let session = sessions.get(session_id)?;
-        Some(session.peer_public_key)
-    }
-
-    pub fn list_not_seen(&self) -> Vec<usize> {
-        self.not_seen.read().unwrap().clone()
     }
 
     pub fn set_seen(&self, session_id: usize, seen: bool) {
@@ -608,7 +601,7 @@ impl SessionManager {
     }
 
     pub fn add_contact(&self, session_id: usize, name: String) -> Result<(), rusqlite::Error> {
-        let contact = self.identity.read().unwrap().as_ref().unwrap().add_contact(name, self.get_peer_public_key(&session_id).unwrap())?;
+        let contact = self.identity.read().unwrap().as_ref().unwrap().add_contact(name, self.sessions.read().unwrap().get(&session_id).unwrap().peer_public_key)?;
         self.loaded_contacts.write().unwrap().insert(session_id, contact);
         self.last_loaded_msg_offsets.write().unwrap().insert(session_id, 0);
         Ok(())
@@ -671,8 +664,8 @@ impl SessionManager {
         msgs
     }
 
-    pub fn get_public_keys(&self, session_id: &usize) -> ([u8; PUBLIC_KEY_LENGTH], [u8; PUBLIC_KEY_LENGTH]) {
-        (self.identity.read().unwrap().as_ref().unwrap().get_public_key(), self.loaded_contacts.read().unwrap().get(session_id).unwrap().public_key)
+    pub fn get_my_public_key(&self) -> [u8; PUBLIC_KEY_LENGTH] {
+        self.identity.read().unwrap().as_ref().unwrap().get_public_key()
     }
 
     pub fn get_my_name(&self) -> String {

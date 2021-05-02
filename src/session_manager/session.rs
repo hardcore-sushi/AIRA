@@ -1,4 +1,4 @@
-use std::{io::ErrorKind, convert::TryInto};
+use std::{convert::TryInto, io::ErrorKind, net::IpAddr};
 use tokio::{net::TcpStream, io::{AsyncReadExt, AsyncWriteExt}};
 use ed25519_dalek;
 use ed25519_dalek::{ed25519::signature::Signature, Verifier, PUBLIC_KEY_LENGTH, SIGNATURE_LENGTH};
@@ -48,8 +48,8 @@ impl Session {
         }
     }
 
-    pub fn get_ip(&self) -> String {
-        self.stream.peer_addr().unwrap().ip().to_string()
+    pub fn get_ip(&self) -> IpAddr {
+        self.stream.peer_addr().unwrap().ip()
     }
 
     async fn socket_read(&mut self, buff: &mut [u8]) -> Result<usize, SessionError> {

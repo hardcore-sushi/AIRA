@@ -93,16 +93,25 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
     let session_manager = global_vars.read().unwrap().session_manager.clone();
     ui_connection.set_name(&session_manager.get_my_name());
     session_manager.list_contacts().into_iter().for_each(|contact|{
-        ui_connection.set_as_contact(contact.0, &contact.1, contact.2);
+        ui_connection.set_as_contact(contact.0, &contact.1, contact.2, &crypto::generate_fingerprint(&contact.3));
         session_manager.last_loaded_msg_offsets.write().unwrap().insert(contact.0, 0);
         load_msgs(session_manager.clone(), &mut ui_connection, &contact.0);
     });
     session_manager.sessions.read().unwrap().iter().for_each(|session| {
-        ui_connection.on_new_session(session.0, &session.1.name, session.1.outgoing, session.1.file_download.as_ref());
+        ui_connection.on_new_session(
+            session.0,
+            &session.1.name,
+            session.1.outgoing,
+            &crypto::generate_fingerprint(&session.1.peer_public_key),
+            session.1.ip,
+            session.1.file_download.as_ref()
+        );
     });
-    let not_seen = session_manager.list_not_seen();
-    if not_seen.len() > 0 {
-        ui_connection.set_not_seen(not_seen);
+    {
+        let not_seen = session_manager.not_seen.read().unwrap();
+        if not_seen.len() > 0 {
+            ui_connection.set_not_seen(not_seen.clone());
+        }
     }
     session_manager.get_saved_msgs().into_iter().for_each(|msgs| {
         ui_connection.load_msgs(&msgs.0, &msgs.1);
@@ -180,13 +189,6 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                         Ok(_) => {},
                                         Err(e) => print_error!(e)
                                     }
-                                }
-                                "fingerprints" => {
-                                    let session_id: usize = args[1].parse().unwrap();
-                                    let (local, peer) = session_manager.get_public_keys(&session_id);
-                                    let local = crypto::generate_fingerprint(&local);
-                                    let peer = crypto::generate_fingerprint(&peer);
-                                    ui_connection.fingerprints(&local, &peer);
                                 }
                                 "verify" => {
                                     let session_id: usize = args[1].parse().unwrap();
@@ -509,9 +511,11 @@ fn index_not_logged_in(global_vars: &Arc<RwLock<GlobalVars>>) -> HttpResponse {
 async fn handle_index(req: HttpRequest) -> HttpResponse {
     let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
     if is_authenticated(&req) {
+        let global_vars_read = global_vars.read().unwrap();
         HttpResponse::Ok().body(
             include_str!("frontend/index.html")
-                .replace("WEBSOCKET_PORT", &global_vars.read().unwrap().websocket_port.to_string())
+                .replace("IDENTITY_FINGERPRINT", &crypto::generate_fingerprint(&global_vars_read.session_manager.get_my_public_key()))
+                .replace("WEBSOCKET_PORT", &global_vars_read.websocket_port.to_string())
                 .replace("IS_IDENTITY_PROTECTED", &Identity::is_protected().unwrap().to_string())
         )
     } else {
