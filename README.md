@@ -1,7 +1,7 @@
 # AIRA
 AIRA is peer-to-peer encrypted communication tool for local networks built on the [PSEC protocol](https://forge.chapril.org/hardcoresushi/PSEC). It allows to securely send text messages and files without any server or Internet access.
 
-<img src="https://forge.chapril.org/hardcoresushi/AIRA/raw/branch/master/screenshot.png">
+![Screenshot of a conversation between Alice and Bob on AIRA](/screenshot.png)
 
 # Rationale
 When people want to send a file from one computer to another located only meters apart, they usually send it via mail. This mail usually goes through many servers around the world before reaching its final destination.
@@ -19,7 +19,6 @@ AIRA is still under developement and is not ready for production usage yet. Not 
 - Automatic peer discovery using mDNS
 - Manual peer connection
 - File transferts
-- Notifications
 - Encrypted database
 - Contact verification
 - IPv4/v6 compatibility

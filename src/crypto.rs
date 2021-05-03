@@ -4,8 +4,8 @@ use sha2::Sha384;
 use hmac::{Hmac, Mac, NewMac};
 use scrypt::{scrypt, Params};
 use rand_8::{RngCore, rngs::OsRng};
-use aes_gcm::{aead::{Aead, generic_array::GenericArray}, NewAead};
-use aes_gcm_siv::{Aes256GcmSiv};
+use aes_gcm::{aead::Aead, NewAead, Nonce};
+use aes_gcm_siv::Aes256GcmSiv;
 use zeroize::Zeroize;
 use strum_macros::Display;
 use crate::utils::*;
@@ -128,7 +128,7 @@ impl ApplicationKeys {
 pub fn compute_handshake_finished(local_handshake_traffic_secret: [u8; HASH_OUTPUT_LEN], handshake_hash: [u8; HASH_OUTPUT_LEN]) -> [u8; HASH_OUTPUT_LEN] {
     let mut finished_key = [0; HASH_OUTPUT_LEN];
     hkdf_expand_label(&local_handshake_traffic_secret, "finished", None, &mut finished_key);
-    let mut hmac = Hmac::<Sha384>::new_varkey(&finished_key).unwrap();
+    let mut hmac = Hmac::<Sha384>::new_from_slice(&finished_key).unwrap();
     hmac.update(&handshake_hash);
     hmac.finalize().into_bytes().as_slice().try_into().unwrap()
 }
@@ -136,7 +136,7 @@ pub fn compute_handshake_finished(local_handshake_traffic_secret: [u8; HASH_OUTP
 pub fn verify_handshake_finished(peer_handshake_finished: [u8; HASH_OUTPUT_LEN], peer_handshake_traffic_secret: [u8; HASH_OUTPUT_LEN], handshake_hash: [u8; HASH_OUTPUT_LEN]) -> bool {
     let mut peer_finished_key = [0; HASH_OUTPUT_LEN];
     hkdf_expand_label(&peer_handshake_traffic_secret, "finished", None, &mut peer_finished_key);
-    let mut hmac = Hmac::<Sha384>::new_varkey(&peer_finished_key).unwrap();
+    let mut hmac = Hmac::<Sha384>::new_from_slice(&peer_finished_key).unwrap();
     hmac.update(&handshake_hash);
     hmac.verify(&peer_handshake_finished).is_ok()
 }
@@ -161,11 +161,11 @@ pub fn encrypt_data(data: &[u8], master_key: &[u8]) -> Result<Vec<u8>, CryptoErr
     if master_key.len() != MASTER_KEY_LEN {
         return Err(CryptoError::InvalidLength);
     }
-    let cipher = Aes256GcmSiv::new(GenericArray::from_slice(master_key));
+    let cipher = Aes256GcmSiv::new_from_slice(master_key).unwrap();
     let mut iv = [0; IV_LEN];
     OsRng.fill_bytes(&mut iv); //use it for IV for now
     let mut cipher_text = iv.to_vec();
-    cipher_text.extend(cipher.encrypt(GenericArray::from_slice(&iv), data).unwrap());
+    cipher_text.extend(cipher.encrypt(Nonce::from_slice(&iv), data).unwrap());
     Ok(cipher_text)
 }
 
@@ -179,8 +179,8 @@ pub fn decrypt_data(data: &[u8], master_key: &[u8]) -> Result<Vec<u8>, CryptoErr
     if data.len() <= IV_LEN || master_key.len() != MASTER_KEY_LEN {
         return Err(CryptoError::InvalidLength);
     }
-    let cipher = Aes256GcmSiv::new(GenericArray::from_slice(master_key));
-    match cipher.decrypt(GenericArray::from_slice(&data[..IV_LEN]), &data[IV_LEN..]) {
+    let cipher = Aes256GcmSiv::new_from_slice(master_key).unwrap();
+    match cipher.decrypt(Nonce::from_slice(&data[..IV_LEN]), &data[IV_LEN..]) {
         Ok(data) => {
             Ok(data)
         },
@@ -202,8 +202,8 @@ pub fn encrypt_master_key(mut master_key: [u8; MASTER_KEY_LEN], password: &[u8])
     scrypt(password, &salt, &scrypt_params(), &mut password_hash).unwrap();
     let mut output = [0; IV_LEN+MASTER_KEY_LEN+AES_TAG_LEN];
     OsRng.fill_bytes(&mut output); //use it for IV for now
-    let cipher = Aes256GcmSiv::new(GenericArray::from_slice(&password_hash));
-    let encrypted_master_key = cipher.encrypt(GenericArray::from_slice(&output[..IV_LEN]), master_key.as_ref()).unwrap();
+    let cipher = Aes256GcmSiv::new_from_slice(&password_hash).unwrap();
+    let encrypted_master_key = cipher.encrypt(Nonce::from_slice(&output[..IV_LEN]), master_key.as_ref()).unwrap();
     master_key.zeroize();
     password_hash.zeroize();
     encrypted_master_key.into_iter().enumerate().for_each(|i|{
@@ -218,8 +218,8 @@ pub fn decrypt_master_key(encrypted_master_key: &[u8], password: &[u8], salt: &[
     }
     let mut password_hash = [0; PASSWORD_HASH_LEN];
     scrypt(password, salt, &scrypt_params(), &mut password_hash).unwrap();
-    let cipher = Aes256GcmSiv::new(GenericArray::from_slice(&password_hash));
-    let result = match cipher.decrypt(GenericArray::from_slice(&encrypted_master_key[..IV_LEN]), &encrypted_master_key[IV_LEN..]) {
+    let cipher = Aes256GcmSiv::new_from_slice(&password_hash).unwrap();
+    let result = match cipher.decrypt(Nonce::from_slice(&encrypted_master_key[..IV_LEN]), &encrypted_master_key[IV_LEN..]) {
         Ok(master_key) => {
             if master_key.len() == MASTER_KEY_LEN {
                 Ok(master_key.try_into().unwrap())

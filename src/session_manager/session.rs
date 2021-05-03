@@ -5,7 +5,7 @@ use ed25519_dalek::{ed25519::signature::Signature, Verifier, PUBLIC_KEY_LENGTH, 
 use x25519_dalek;
 use rand_7::{RngCore, rngs::OsRng};
 use sha2::{Sha384, Digest};
-use aes_gcm::{Aes128Gcm, aead::Aead, NewAead, aead::Payload, aead::generic_array::GenericArray};
+use aes_gcm::{Aes128Gcm, aead::Aead, NewAead, aead::Payload, Nonce};
 use crate::utils::*;
 use crate::crypto::*;
 use crate::identity::Identity;
@@ -112,9 +112,9 @@ impl Session {
     }
 
     fn on_handshake_successful(&mut self, application_keys: ApplicationKeys){
-        self.local_cipher = Some(Aes128Gcm::new_varkey(&application_keys.local_key).unwrap());
+        self.local_cipher = Some(Aes128Gcm::new_from_slice(&application_keys.local_key).unwrap());
         self.local_iv = Some(application_keys.local_iv);
-        self.peer_cipher = Some(Aes128Gcm::new_varkey(&application_keys.peer_key).unwrap());
+        self.peer_cipher = Some(Aes128Gcm::new_from_slice(&application_keys.peer_key).unwrap());
         self.peer_iv = Some(application_keys.peer_iv);
         self.handshake_sent_buff.clear();
         self.handshake_sent_buff.shrink_to_fit();
@@ -156,19 +156,19 @@ impl Session {
         auth_msg[..PUBLIC_KEY_LENGTH].copy_from_slice(&identity.get_public_key());
         auth_msg[PUBLIC_KEY_LENGTH..].copy_from_slice(&identity.sign(ephemeral_public_key.as_bytes()));
         //encrypt auth_msg
-        let local_cipher = Aes128Gcm::new_varkey(&handshake_keys.local_key).unwrap();
+        let local_cipher = Aes128Gcm::new_from_slice(&handshake_keys.local_key).unwrap();
         let mut local_handshake_counter = 0;
         let nonce = iv_to_nonce(&handshake_keys.local_iv, &mut local_handshake_counter);
-        let encrypted_auth_msg = local_cipher.encrypt(GenericArray::from_slice(&nonce), auth_msg.as_ref()).unwrap();
+        let encrypted_auth_msg = local_cipher.encrypt(Nonce::from_slice(&nonce), auth_msg.as_ref()).unwrap();
         self.handshake_write(&encrypted_auth_msg).await?;
 
         let mut encrypted_peer_auth_msg = [0; PUBLIC_KEY_LENGTH+SIGNATURE_LENGTH+AES_TAG_LEN];
         self.handshake_read(&mut encrypted_peer_auth_msg).await?;
         //decrypt peer_auth_msg
-        let peer_cipher = Aes128Gcm::new_varkey(&handshake_keys.peer_key).unwrap();
+        let peer_cipher = Aes128Gcm::new_from_slice(&handshake_keys.peer_key).unwrap();
         let mut peer_handshake_counter = 0;
         let peer_nonce = iv_to_nonce(&handshake_keys.peer_iv, &mut peer_handshake_counter);
-        match peer_cipher.decrypt(GenericArray::from_slice(&peer_nonce), encrypted_peer_auth_msg.as_ref()) {
+        match peer_cipher.decrypt(Nonce::from_slice(&peer_nonce), encrypted_peer_auth_msg.as_ref()) {
             Ok(peer_auth_msg) => {
                 //verify ephemeral public key signature
                 self.peer_public_key = Some(to_array_32(&peer_auth_msg[..PUBLIC_KEY_LENGTH]));
@@ -222,7 +222,7 @@ impl Session {
             aad: &cipher_len
         };
         let nonce = iv_to_nonce(&self.local_iv.unwrap(), &mut self.local_counter);
-        let cipher_text = self.local_cipher.as_ref().unwrap().encrypt(GenericArray::from_slice(&nonce), payload).unwrap();
+        let cipher_text = self.local_cipher.as_ref().unwrap().encrypt(Nonce::from_slice(&nonce), payload).unwrap();
         [&cipher_len, cipher_text.as_slice()].concat()
     }
     
@@ -247,7 +247,7 @@ impl Session {
                 msg: &cipher_text,
                 aad: &message_len
             };
-            match peer_cipher.decrypt(GenericArray::from_slice(&peer_nonce), payload) {
+            match peer_cipher.decrypt(Nonce::from_slice(&peer_nonce), payload) {
                 Ok(plain_text) => Ok(Session::unpad(plain_text)),
                 Err(_) => Err(SessionError::TransmissionCorrupted)
             }

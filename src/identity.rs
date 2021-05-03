@@ -415,7 +415,7 @@ impl Identity {
         Ok(Identity {
             name: name.to_owned(),
             keypair,
-            master_key: master_key,
+            master_key,
         })
     }
 
