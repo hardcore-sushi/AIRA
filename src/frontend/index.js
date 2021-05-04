@@ -1,6 +1,5 @@
 "use strict";
 
-const ENTER_KEY_CODE = 13;
 let identityName = undefined;
 let socket = null;
 let notificationAllowed = false;
@@ -20,20 +19,20 @@ function onClickSession(event) {
         }
         displaySessions();
         displayHeader();
-        dislayHistory();
         displayChatBottom();
+        dislayHistory();
     }
 }
 let ip_input = document.getElementById("ip_input");
 ip_input.addEventListener("keyup", function(event) {
-    if (event.keyCode === ENTER_KEY_CODE) {
+    if (event.key === "Enter") {
         socket.send("connect "+ip_input.value);
         ip_input.value = "";
     }
 });
 let message_input = document.getElementById("message_input");
 message_input.addEventListener("keyup", function(event) {
-    if (event.keyCode === ENTER_KEY_CODE) {
+    if (event.key === "Enter") {
         socket.send("send "+currentSessionId+" "+message_input.value);
         message_input.value = "";
     }
@@ -797,8 +796,8 @@ function generateSession(sessionId, session) {
 function generateMsgHeader(name) {
     let p = document.createElement("p");
     p.appendChild(document.createTextNode(name));
-    p.classList.add("name");
     let div = document.createElement("div");
+    div.classList.add("header");
     div.appendChild(generateAvatar(name));
     div.appendChild(p);
     return div;
@@ -807,15 +806,19 @@ function generateMessage(name, msg) {
     let p = document.createElement("p");
     p.appendChild(document.createTextNode(msg));
     let div = document.createElement("div");
+    div.classList.add("content");
     div.appendChild(linkifyElement(p));
     let li = document.createElement("li");
-    li.appendChild(generateMsgHeader(name))
+    if (typeof name !== "undefined") {
+        li.appendChild(generateMsgHeader(name));
+    }
     li.appendChild(div);
     return li;
 }
 function generateFile(name, outgoing, file_info) {
     let div1 = document.createElement("div");
     div1.classList.add("file");
+    div1.classList.add("content");
     let div2 = document.createElement("div");
     let h4 = document.createElement("h4");
     if (outgoing) {
@@ -833,7 +836,9 @@ function generateFile(name, outgoing, file_info) {
     a.target = "_blank";
     div1.appendChild(a);
     let li = document.createElement("li");
-    li.appendChild(generateMsgHeader(name));
+    if (typeof name !== "undefined") {
+        li.appendChild(generateMsgHeader(name));
+    }
     li.appendChild(div1);
     return li;
 }
@@ -905,14 +910,18 @@ function displayChatBottom(speed = undefined) {
 function dislayHistory(scrollToBottom = true) {
     msg_log.style.display = "block";
     msg_log.innerHTML = "";
+    let previousOutgoing = undefined;
     msgHistory.get(currentSessionId).forEach(entry => {
-        let name;
-        if (entry[0]) { //outgoing msg
-            name = identityName;
-        } else {
-            name = sessionsData.get(currentSessionId).name;
+        let name = undefined;
+        if (previousOutgoing != entry[0]) {
+            previousOutgoing = entry[0];
+            if (entry[0]) { //outgoing msg
+                name = identityName;
+            } else {
+                name = sessionsData.get(currentSessionId).name;
+            }
         }
-        if (entry[1]){ //is file
+        if (entry[1]) { //is file
             msg_log.appendChild(generateFile(name, entry[0], entry[2]));
         } else {
             msg_log.appendChild(generateMessage(name, entry[2]));

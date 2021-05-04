@@ -87,7 +87,7 @@ input[type="file"] {
 .popup section {
     font-weight: bold;
     display: block;
-    margin-bottom: 1em;
+    margin-bottom: 20px;
 }
 .popup input {
     display: block;
@@ -209,7 +209,7 @@ input[type="file"] {
     content: url("/static/imgs/icons/warning/FF3C00");
     display: inline-block;
     width: 1em;
-    margin-left: .3em;
+    margin-left: 5px;
     vertical-align: middle;
 }
 #left_panel ul li.is_contact p::after {
@@ -219,10 +219,10 @@ input[type="file"] {
     content: url("/static/imgs/icons/verified/FF3C00");
 }
 #left_panel ul li .not_seen_marker {
-    width: .8em;
-    height: .8em;
+    width: 5px;
+    height: 5px;
     background-color: var(--accent);
-    border-radius: 1em;
+    border-radius: 5px;
 }
 #refresher {
     position: relative;
@@ -230,7 +230,7 @@ input[type="file"] {
 #refresher button {
     position: absolute;
     right: 10px;
-    top: 1em;
+    top: 15px;
     z-index: 1;
 }
 #refresher button::after {
@@ -262,7 +262,7 @@ input[type="file"] {
     display: inline-block;
     width: 1.2em;
     vertical-align: middle;
-    padding-left: .3em;
+    margin-left: 10px;
 }
 #chat_header.is_contact p::after {
     content: unset;
@@ -296,7 +296,7 @@ input[type="file"] {
 }
 #message_input {
     border: unset;
-    padding: 1em;
+    padding: 20px;
     font-size: 1.1em;
 }
 #file_transfer {
@@ -319,7 +319,7 @@ input[type="file"] {
 }
 #file_cancel::after {
     background-color: unset;
-    width: 1.2em;
+    width: 20px;
     content: url("/static/imgs/icons/cancel/FF3C00");
 }
 #file_progress {
@@ -342,7 +342,7 @@ input[type="file"] {
 }
 #file_progress_bar {
     flex-grow: 1;
-    height: 1.5em;
+    height: 25px;
 }
 #file_progress_bar div {
     height: 100%;
@@ -357,20 +357,22 @@ input[type="file"] {
     overflow-y: scroll;
     white-space: pre;
 }
-#msg_log li>div:first-of-type { /*message header*/
+#msg_log p {
+    margin: 0;
+}
+#msg_log li .header {
     display: flex;
     align-items: center;
+    margin-top: 15px;
 }
-#msg_log p.name {
-    margin: 0;
+#msg_log li .header p {
     color: var(--accent);
     font-weight: bold;
 }
-#msg_log li>div:last-of-type { /*message content container*/
+#msg_log li .content {
     margin-left: 2em;
-}
-#msg_log li p {
-    margin-top: 0;
+    margin-top: 5px;
+    margin-bottom: 10px;
 }
 #msg_log a {
     color: #238cf5;
@@ -378,10 +380,8 @@ input[type="file"] {
 #msg_log .file {
     display: flex;
     align-items: end;
-    margin-bottom: 1em;
     border-left: 3px solid var(--accent);
-    padding-left: .5em;
-    margin-top: .5em;
+    padding-left: 15px;
 }
 #msg_log .file div { /*title and filename container*/
     display: flex;
@@ -391,14 +391,13 @@ input[type="file"] {
     margin: 0;
 }
 #msg_log .file p {
-    margin: 0;
     color: var(--accent);
 }
 #msg_log .file a::after {
     content: url("/static/imgs/icons/download/FF3C00");
     display: block;
     width: 2em;
-    margin-left: 1em;
+    margin-left: 15px;
 }
 #message_box, #chat_header, #msg_log {
     display: none;
