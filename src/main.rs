@@ -116,6 +116,15 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
     session_manager.get_saved_msgs().into_iter().for_each(|msgs| {
         ui_connection.load_msgs(&msgs.0, &msgs.1);
     });
+    let mut ips = Vec::new();
+    for interface in pnet_datalink::interfaces() {
+        if !interface.is_loopback() {
+            for ip in interface.ips {
+                ips.push(ip.ip());
+            }
+        }
+    }
+    ui_connection.set_local_ips(ips);
     discover_peers(session_manager.clone());
     let handle = Handle::current();
     std::thread::spawn(move || { //new thread needed to block on read_message() without blocking tokio tasks
@@ -549,6 +558,7 @@ fn handle_static(req: HttpRequest) -> HttpResponse {
                         "download" => Some(include_str!("frontend/imgs/icons/download.svg")),
                         "cancel" => Some(include_str!("frontend/imgs/icons/cancel.svg")),
                         "refresh" => Some(include_str!("frontend/imgs/icons/refresh.svg")),
+                        "info" => Some(include_str!("frontend/imgs/icons/info.svg")),
                         "delete_conversation" => Some(include_str!("frontend/imgs/icons/delete_conversation.svg")),
                         _ => None
                     } {

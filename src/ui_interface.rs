@@ -3,7 +3,7 @@ use tungstenite::{WebSocket, protocol::Role, Message};
 use crate::{protocol, session_manager::LargeFileDownload};
 
 mod ui_messages {
-    use std::{iter::FromIterator, net::IpAddr, str::from_utf8};
+    use std::{fmt::Display, iter::FromIterator, net::IpAddr, str::from_utf8};
     use tungstenite::Message;
     use uuid::Uuid;
     use crate::{print_error, session_manager::{protocol, LargeFileDownload, FileState}, utils::to_uuid_bytes};
@@ -11,17 +11,22 @@ mod ui_messages {
     const ON_NEW_MESSAGE: &str = "new_message";
     const LOAD_SENT_MESSAGE: &str = "load_sent_msg";
 
-    fn new_message(verb: &str, session_id: &usize, outgoing: bool, raw_message: &[u8]) -> Option<Message> {
+    fn new_message(command: &str, session_id: &usize, outgoing: bool, raw_message: &[u8]) -> Option<Message> {
         match from_utf8(raw_message) {
-            Ok(msg) => Some(Message::from(format!("{} {} {} {}", verb, session_id, outgoing, msg))),
+            Ok(msg) => Some(Message::from(format!("{} {} {} {}", command, session_id, outgoing, msg))),
             Err(e) => {
                 print_error!(e);
                 None
             }
         }
     }
-    fn simple_event(verb: &str, session_id: &usize) -> Message {
-        Message::from(format!("{} {}", verb, session_id))
+    fn simple_event(command: &str, session_id: &usize) -> Message {
+        Message::from(format!("{} {}", command, session_id))
+    }
+    fn data_list<T: Display>(command: &str, data: Vec<T>) -> Message {
+        Message::from(command.to_owned()+&String::from_iter(data.into_iter().map(|i| {
+            format!(" {}", i)
+        })))
     }
 
     pub fn on_disconnected(session_id: &usize) -> Message {
@@ -91,9 +96,10 @@ mod ui_messages {
         }
     }
     pub fn set_not_seen(session_ids: Vec<usize>) -> Message {
-        Message::from("not_seen".to_owned()+&String::from_iter(session_ids.into_iter().map(|session_id| {
-            format!(" {}", session_id)
-        })))
+        data_list("not_seen", session_ids)
+    }
+    pub fn set_local_ips(ips: Vec<IpAddr>) -> Message {
+        data_list("local_ips", ips)
     }
     pub fn on_name_told(session_id: &usize, name: &str) -> Message {
         Message::from(format!("name_told {} {}", session_id, name))
@@ -182,6 +188,9 @@ impl UiConnection {
     }
     pub fn set_not_seen(&mut self, session_ids: Vec<usize>) {
         self.write_message(ui_messages::set_not_seen(session_ids));
+    }
+    pub fn set_local_ips(&mut self, ips: Vec<IpAddr>) {
+        self.write_message(ui_messages::set_local_ips(ips));
     }
     pub fn set_name(&mut self, new_name: &str) {
         self.write_message(ui_messages::set_name(new_name));

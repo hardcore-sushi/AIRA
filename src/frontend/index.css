@@ -224,20 +224,34 @@ input[type="file"] {
     background-color: var(--accent);
     border-radius: 12px;
 }
-#refresher {
-    position: relative;
-}
-#refresher button {
-    position: absolute;
-    right: 10px;
-    top: 15px;
-    z-index: 1;
-}
 #refresher button::after {
     content: url("/static/imgs/icons/refresh");  
 }
 #connect_box {
     margin-bottom: 20px;
+}
+#refresher, #connect_box>div {
+    position: relative;
+}
+#show_local_ips, #refresher button {
+    position: absolute;
+    right: 10px;
+    top: 15px;
+    z-index: 1;
+}
+#show_local_ips::after {
+    content: url("/static/imgs/icons/info/52585C");
+    background-color: unset;
+    padding: unset;
+    width: 38px;
+    height: 38px;
+}
+#show_local_ips:hover::after {
+    background-color: unset;
+    content: url("/static/imgs/icons/info/FF3C00");
+}
+ul.ips {
+    list-style-type: unset;
 }
 #chat_header {
     flex-direction: row;

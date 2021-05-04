@@ -3,6 +3,7 @@
 let identityName = undefined;
 let socket = null;
 let notificationAllowed = false;
+let localIps = [];
 let currentSessionId = -1;
 let sessionsData = new Map();
 let msgHistory = new Map();
@@ -30,6 +31,21 @@ ip_input.addEventListener("keyup", function(event) {
         ip_input.value = "";
     }
 });
+document.getElementById("show_local_ips").onclick = function() {
+    let mainDiv = document.createElement("div");
+    let h2Title = document.createElement("h2");
+    h2Title.textContent = "Your IP addresses:";
+    mainDiv.appendChild(h2Title);
+    let ul = document.createElement("ul");
+    ul.classList.add("ips");
+    for (let i=0; i<localIps.length; ++i) {
+        let li = document.createElement("li");
+        li.textContent = localIps[i];
+        ul.appendChild(li);
+    }
+    mainDiv.appendChild(ul);
+    showPopup(mainDiv);
+}
 let message_input = document.getElementById("message_input");
 message_input.addEventListener("keyup", function(event) {
     if (event.key === "Enter") {
@@ -428,6 +444,9 @@ socket.onmessage = function(msg) {
             case "not_seen":
                 setNotSeen(msg.data.slice(args[0].length+1));
                 break;
+            case "local_ips":
+                setLocalIps(msg.data.slice(args[0].length+1));
+                break;
             case "set_name":
                 onNameSet(msg.data.slice(args[0].length+1));
                 break;
@@ -465,11 +484,14 @@ function onNameTold(sessionId, name) {
     displaySessions();
 }
 function setNotSeen(str_sessionIds) {
-    let sessionIds = str_sessionIds.split(" ");
+    let sessionIds = str_sessionIds.split(' ');
     for (let i=0; i<sessionIds.length; ++i) {
         sessionsData.get(sessionIds[i]).seen = false;
     }
     displaySessions();
+}
+function setLocalIps(str_ips) {
+    localIps = str_ips.split(' ');
 }
 function onIsContact(sessionId, verified, fingerprint, name) {
     if (sessionsData.has(sessionId)) {
