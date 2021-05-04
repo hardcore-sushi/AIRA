@@ -1,3 +1,6 @@
+use std::{convert::TryInto, str::from_utf8};
+use crate::print_error;
+
 pub struct Headers;
 
 impl Headers {
@@ -28,6 +31,31 @@ pub fn file(file_name: &str, buffer: &[u8]) -> Vec<u8> {
     [&[Headers::FILE], &(file_name.len() as u16).to_be_bytes()[..], file_name.as_bytes(), buffer].concat()
 }
 
+pub fn parse_file<'a>(buffer: &'a [u8]) -> Option<(&'a [u8], &'a [u8])> {
+    if buffer.len() > 3 {
+        let file_name_len = u16::from_be_bytes([buffer[1], buffer[2]]) as usize;
+        if buffer.len() > 3+file_name_len {
+            let file_name = &buffer[3..3+file_name_len];
+            return Some((file_name, &buffer[3+file_name_len..]));
+        }
+    }
+    None
+}
+
 pub fn ask_large_file(file_size: u64, file_name: &str) -> Vec<u8> {
     [&[Headers::ASK_LARGE_FILE], &file_size.to_be_bytes()[..], file_name.as_bytes()].concat()
+}
+
+pub fn parse_ask_file(buffer: &[u8]) -> Option<(u64, String)> {
+    if buffer.len() > 9 {
+        let file_size = u64::from_be_bytes(buffer[1..9].try_into().unwrap());
+        match from_utf8(&buffer[9..]) {
+            Ok(file_name) => {
+                let file_name = sanitize_filename::sanitize(file_name);
+                return Some((file_size, file_name));
+            }
+            Err(e) => print_error!(e),
+        }
+    }
+    None
 }

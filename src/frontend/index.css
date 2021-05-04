@@ -219,10 +219,10 @@ input[type="file"] {
     content: url("/static/imgs/icons/verified/FF3C00");
 }
 #left_panel ul li .not_seen_marker {
-    width: 5px;
-    height: 5px;
+    width: 12px;
+    height: 12px;
     background-color: var(--accent);
-    border-radius: 5px;
+    border-radius: 12px;
 }
 #refresher {
     position: relative;
@@ -242,7 +242,7 @@ input[type="file"] {
 #chat_header {
     flex-direction: row;
     align-items: center;
-    padding: 5px 20px;
+    padding: 20px 20px;
     font-size: 1.5em;
 }
 #chat_header>div {
@@ -254,8 +254,9 @@ input[type="file"] {
 #chat_header>div:hover p {
     color: var(--accent);
 }
-#chat_header>div>p {
+#chat_header>div>p { /*name*/
     font-weight: bold;
+    margin: 0;
 }
 #chat_header p::after {
     content: url("/static/imgs/icons/warning/FF3C00");

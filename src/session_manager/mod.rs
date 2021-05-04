@@ -1,7 +1,7 @@
 mod session;
 pub mod protocol;
 
-use std::{collections::HashMap, net::{IpAddr, SocketAddr}, io::{self, Write}, convert::TryInto, str::from_utf8, fs::OpenOptions, sync::{Mutex, RwLock, Arc}};
+use std::{collections::HashMap, net::{IpAddr, SocketAddr}, io::{self, Write}, str::from_utf8, fs::OpenOptions, sync::{Mutex, RwLock, Arc}};
 use tokio::{net::{TcpListener, TcpStream}, sync::mpsc::{self, Sender, Receiver}};
 use libmdns::Service;
 use strum_macros::Display;
@@ -239,25 +239,20 @@ impl SessionManager {
                                 }
                                 protocol::Headers::ASK_LARGE_FILE => {
                                     if self.sessions.read().unwrap().get(&session_id).unwrap().file_download.is_none() { //don't accept 2 downloads at the same time
-                                        let file_size = u64::from_be_bytes(buffer[1..9].try_into().unwrap());
-                                        match from_utf8(&buffer[9..]) {
-                                            Ok(file_name) => {
-                                                let file_name = sanitize_filename::sanitize(file_name);
-                                                let download_dir = UserDirs::new().unwrap().download_dir;
-                                                self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_download = Some(LargeFileDownload{
-                                                    file_name: file_name.clone(),
-                                                    download_location: download_dir.to_str().unwrap().to_string(),
-                                                    file_size,
-                                                    state: FileState::ASKING,
-                                                    transferred: 0,
-                                                    last_chunk: get_unix_timestamp(),
-                                                });
-                                                local_file_path = Some(get_not_used_path(&file_name, &download_dir));
-                                                self.with_ui_connection(|ui_connection| {
-                                                    ui_connection.on_ask_large_file(&session_id, file_size, &file_name, download_dir.to_str().unwrap());
-                                                })
-                                            }
-                                            Err(e) => print_error!(e),
+                                        if let Some((file_size, file_name)) = protocol::parse_ask_file(&buffer) {
+                                            let download_dir = UserDirs::new().unwrap().download_dir;
+                                            self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_download = Some(LargeFileDownload{
+                                                file_name: file_name.clone(),
+                                                download_location: download_dir.to_str().unwrap().to_string(),
+                                                file_size,
+                                                state: FileState::ASKING,
+                                                transferred: 0,
+                                                last_chunk: get_unix_timestamp(),
+                                            });
+                                            local_file_path = Some(get_not_used_path(&file_name, &download_dir));
+                                            self.with_ui_connection(|ui_connection| {
+                                                ui_connection.on_ask_large_file(&session_id, file_size, &file_name, download_dir.to_str().unwrap());
+                                            })
                                         }
                                     } else if let Err(e) = session.encrypt_and_send(&[protocol::Headers::ABORT_FILE_TRANSFER]).await {
                                         print_error!(e);
@@ -361,16 +356,18 @@ impl SessionManager {
                                     let header = buffer[0];
                                     let buffer = match header {
                                         protocol::Headers::FILE => {
-                                            let file_name_len = u16::from_be_bytes([buffer[1], buffer[2]]) as usize;
-                                            let file_name = &buffer[3..3+file_name_len];
-                                            match self.store_file(&session_id, &buffer[3+file_name_len..]) {
-                                                Ok(file_uuid) => {
-                                                    Some([&[protocol::Headers::FILE][..], file_uuid.as_bytes(), file_name].concat())
+                                            if let Some((file_name, content)) = protocol::parse_file(&buffer) {
+                                                match self.store_file(&session_id, content) {
+                                                    Ok(file_uuid) => {
+                                                        Some([&[protocol::Headers::FILE][..], file_uuid.as_bytes(), file_name].concat())
+                                                    }
+                                                    Err(e) => {
+                                                        print_error!(e);
+                                                        None
+                                                    }
                                                 }
-                                                Err(e) => {
-                                                    print_error!(e);
-                                                    None
-                                                }
+                                            } else {
+                                                None
                                             }
                                         }
                                         _ => {

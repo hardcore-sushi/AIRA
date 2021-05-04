@@ -732,6 +732,11 @@ function displayHeader() {
 function showPopup(content, closeButton = true) {
     let popup_background = document.createElement("div");
     popup_background.classList.add("popup_background");
+    popup_background.onclick = function(e) {
+        if (e.target == popup_background) {
+            removePopup();
+        }
+    };
     let popup = document.createElement("div");
     popup.classList.add("popup");
     if (closeButton) {
