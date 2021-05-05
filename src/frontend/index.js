@@ -165,7 +165,14 @@ document.getElementById("logout").onclick = function() {
 document.getElementById("attach_file").onchange = function(event) {
     let file = event.target.files[0];
     if (file.size > 32760000) {
-        if (!pendingFiles.has(currentSessionId)) {
+        if (pendingFiles.has(currentSessionId)) {
+            let mainDiv = document.createElement("div");
+            mainDiv.appendChild(generatePopupWarningTitle());
+            let p = document.createElement("p");
+            p.textContent = "Another file transfer is already in progress.";
+            mainDiv.appendChild(p);
+            showPopup(mainDiv);
+        } else {
             pendingFiles.set(currentSessionId, {
                 "file": file,
                 "name": file.name,

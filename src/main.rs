@@ -363,10 +363,11 @@ async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpRespo
                                 print_error!(e);
                                 return HttpResponse::InternalServerError().finish();
                             }
+                            let last_chunk = chunk_buffer.len() < constants::FILE_CHUNK_SIZE;
                             if !match ack_receiver.recv().await {
                                 Some(should_continue) => {
                                     //send previous encrypted chunk even if transfert is aborted to keep PSEC nonces syncrhonized
-                                    if let Err(e) = global_vars_read.session_manager.send_encrypted_file_chunk(&session_id, ack_sender.clone()).await {
+                                    if let Err(e) = global_vars_read.session_manager.send_encrypted_file_chunk(&session_id, ack_sender.clone(), last_chunk).await {
                                         print_error!(e);
                                         false
                                     } else {
@@ -377,7 +378,7 @@ async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpRespo
                             } {
                                 return HttpResponse::InternalServerError().finish()
                             }
-                            if chunk_buffer.len() < constants::FILE_CHUNK_SIZE {
+                            if last_chunk {
                                 break;
                             } else {
                                 chunk_buffer.truncate(1);

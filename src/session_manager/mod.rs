@@ -30,6 +30,7 @@ enum SessionCommand {
     },
     SendEncryptedFileChunk {
         sender: Sender<bool>,
+        last_chunk: bool,
     },
     EncryptFileChunk {
         plain_text: Vec<u8>,
@@ -134,10 +135,11 @@ impl SessionManager {
         }
     }
 
-    pub async fn send_encrypted_file_chunk(&self, session_id: &usize, ack_sender: Sender<bool>) -> Result<(), SessionError> {
+    pub async fn send_encrypted_file_chunk(&self, session_id: &usize, ack_sender: Sender<bool>, last_chunk: bool) -> Result<(), SessionError> {
         if let Some(sender) = self.get_session_sender(session_id) {
             match sender.send(SessionCommand::SendEncryptedFileChunk {
                 sender: ack_sender,
+                last_chunk
             }).await {
                 Ok(_) => Ok(()),
                 Err(e) => {
@@ -175,13 +177,13 @@ impl SessionManager {
         self.not_seen.write().unwrap().retain(|x| x != session_id);
     }
 
-    async fn send_msg(&self, session_id: usize, session_write: &mut SessionWrite, buff: &[u8], aborted: &mut bool, file_ack_sender: Option<&Sender<bool>>) -> Result<(), SessionError> {
+    async fn send_msg(&self, session_id: usize, session_write: &mut SessionWrite, buff: &[u8], is_sending: &mut bool, file_ack_sender: Option<&Sender<bool>>) -> Result<(), SessionError> {
         session_write.encrypt_and_send(&buff).await?;
         if buff[0] == protocol::Headers::ACCEPT_LARGE_FILE {
             self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_download.as_mut().unwrap().state = FileState::ACCEPTED;
         } else if buff[0] == protocol::Headers::ABORT_FILE_TRANSFER {
             self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_download = None;
-            *aborted = true;
+            *is_sending = false;
             if let Some(sender) = file_ack_sender {
                 if let Err(e) = sender.send(false).await {
                     print_error!(e);
@@ -202,7 +204,7 @@ impl SessionManager {
         let mut next_chunk: Option<Vec<u8>> = None;
         let mut file_ack_sender: Option<Sender<bool>> = None;
         let mut msg_queue = Vec::new();
-        let mut aborted = false;
+        let mut is_sending = false;
 
         let (session_read, mut session_write) = session.into_spit().unwrap();
         let receiving = session_read.receive_and_decrypt();
@@ -245,7 +247,7 @@ impl SessionManager {
                                     }
                                 }
                                 protocol::Headers::ASK_LARGE_FILE => {
-                                    if self.sessions.read().unwrap().get(&session_id).unwrap().file_download.is_none() { //don't accept 2 downloads at the same time
+                                    if self.sessions.read().unwrap().get(&session_id).unwrap().file_download.is_none() && !is_sending { //don't accept 2 file transfers at the same time
                                         if let Some((file_size, file_name)) = protocol::parse_ask_file(&buffer) {
                                             let download_dir = UserDirs::new().unwrap().download_dir;
                                             self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_download = Some(LargeFileDownload{
@@ -341,7 +343,7 @@ impl SessionManager {
                                             });
                                         }
                                         if sender.send(true).await.is_err() {
-                                            aborted = true;
+                                            is_sending = false;
                                         }
                                     }
                                 }
@@ -350,7 +352,7 @@ impl SessionManager {
                                         if let Err(e) = sender.send(false).await {
                                             print_error!(e);
                                         }
-                                        aborted = true;
+                                        is_sending = false;
                                     }
                                     self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_download = None;
                                     local_file_path = None;
@@ -385,9 +387,8 @@ impl SessionManager {
                                         let is_classical_message = header == protocol::Headers::MESSAGE || header == protocol::Headers::FILE;
                                         if is_classical_message {
                                             self.set_seen(session_id, false);
-                                        }
-                                        if header == protocol::Headers::ACCEPT_LARGE_FILE {
-                                            aborted = false;
+                                        } else if header == protocol::Headers::ACCEPT_LARGE_FILE {
+                                            is_sending = true;
                                         }
                                         self.with_ui_connection(|ui_connection| {
                                             ui_connection.on_received(&session_id, buffer.as_ref().unwrap());
@@ -411,17 +412,17 @@ impl SessionManager {
                     match command.unwrap() {
                         SessionCommand::Send { buff } => {
                             //don't send msg if we already encrypted a file chunk (keep PSEC nonces synchronized)
-                            if next_chunk.is_none() || aborted {
-                                if let Err(e) = self.send_msg(session_id, &mut session_write, &buff, &mut aborted, file_ack_sender.as_ref()).await {
+                            if is_sending {
+                                msg_queue.push(buff);
+                            } else {
+                                if let Err(e) = self.send_msg(session_id, &mut session_write, &buff, &mut is_sending, file_ack_sender.as_ref()).await {
                                     print_error!(e);
                                     break;
                                 }
-                            } else {
-                                msg_queue.push(buff);
                             }
                         }
                         SessionCommand::EncryptFileChunk { plain_text } => next_chunk = Some(session_write.encrypt(&plain_text)),
-                        SessionCommand::SendEncryptedFileChunk { sender } => {
+                        SessionCommand::SendEncryptedFileChunk { sender, last_chunk } => {
                             if let Some(chunk) = next_chunk.as_ref() {
                                 match session_write.socket_write(chunk).await {
                                     Ok(_) => {
@@ -429,10 +430,13 @@ impl SessionManager {
                                         //once the pre-encrypted chunk is sent, we can send the pending messages
                                         while msg_queue.len() > 0 {
                                             let msg = msg_queue.remove(0);
-                                            if let Err(e) = self.send_msg(session_id, &mut session_write, &msg, &mut aborted, file_ack_sender.as_ref()).await {
+                                            if let Err(e) = self.send_msg(session_id, &mut session_write, &msg, &mut is_sending, file_ack_sender.as_ref()).await {
                                                 print_error!(e);
                                                 break;
                                             }
+                                        }
+                                        if last_chunk {
+                                            is_sending = false;
                                         }
                                     }
                                     Err(e) => {
