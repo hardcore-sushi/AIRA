@@ -1,5 +1,5 @@
 use std::{convert::TryInto, io::ErrorKind, net::IpAddr};
-use tokio::{net::TcpStream, io::{AsyncReadExt, AsyncWriteExt}};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpStream, tcp::{OwnedReadHalf, OwnedWriteHalf}}};
 use ed25519_dalek;
 use ed25519_dalek::{ed25519::signature::Signature, Verifier, PUBLIC_KEY_LENGTH, SIGNATURE_LENGTH};
 use x25519_dalek;
@@ -15,6 +15,135 @@ use crate::print_error;
 const RANDOM_LEN: usize = 64;
 const MESSAGE_LEN_LEN: usize = 4;
 type MessageLenType = u32;
+
+async fn socket_read<T: AsyncReadExt + Unpin>(reader: &mut T, buff: &mut [u8]) -> Result<usize, SessionError> {
+    match reader.read(buff).await {
+        Ok(read) => {
+            if read > 0 {
+                Ok(read)
+            } else {
+                Err(SessionError::BrokenPipe)
+            }
+        }
+        Err(e) => {
+            match e.kind() {
+                ErrorKind::ConnectionReset => Err(SessionError::ConnectionReset),
+                _ => {
+                    print_error!("Receive error ({:?}): {}", e.kind(), e);
+                    Err(SessionError::Unknown)
+                }
+            }
+        }
+    }
+}
+
+async fn socket_write<T: AsyncWriteExt + Unpin>(writer: &mut T, buff: &[u8]) -> Result<(), SessionError> {
+    match writer.write_all(buff).await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(match e.kind() {
+            ErrorKind::BrokenPipe => SessionError::BrokenPipe,
+            ErrorKind::ConnectionReset => SessionError::ConnectionReset,
+            _ => {
+                print_error!("Send error ({:?}): {}", e.kind(), e);
+                SessionError::Unknown
+            }
+        })
+    }
+}
+
+fn pad(plain_text: &[u8]) -> Vec<u8> {
+    let encoded_msg_len = (plain_text.len() as MessageLenType).to_be_bytes();
+    let msg_len = plain_text.len()+encoded_msg_len.len();
+    let mut len = 1000;
+    while len < msg_len {
+        len *= 2;
+    }
+    let mut output = Vec::from(encoded_msg_len);
+    output.reserve(len);
+    output.extend(plain_text);
+    output.resize(len, 0);
+    OsRng.fill_bytes(&mut output[msg_len..]);
+    output
+}
+
+fn unpad(input: Vec<u8>) -> Vec<u8> {
+    let msg_len = MessageLenType::from_be_bytes(input[0..MESSAGE_LEN_LEN].try_into().unwrap()) as usize;
+    Vec::from(&input[MESSAGE_LEN_LEN..MESSAGE_LEN_LEN+msg_len])
+}
+
+fn encrypt(local_cipher: &Aes128Gcm, local_iv: &[u8], local_counter: &mut usize, plain_text: &[u8]) -> Vec<u8> {
+    let padded_msg = pad(plain_text);
+    let cipher_len = (padded_msg.len() as MessageLenType).to_be_bytes();
+    let payload = Payload {
+        msg: &padded_msg,
+        aad: &cipher_len
+    };
+    let nonce = iv_to_nonce(local_iv, local_counter);
+    let cipher_text = local_cipher.encrypt(Nonce::from_slice(&nonce), payload).unwrap();
+    [&cipher_len, cipher_text.as_slice()].concat()
+}
+
+pub async fn encrypt_and_send<T: AsyncWriteExt + Unpin>(writer: &mut T, local_cipher: &Aes128Gcm, local_iv: &[u8], local_counter: &mut usize, plain_text: &[u8]) -> Result<(), SessionError> {
+    let cipher_text = encrypt(local_cipher, local_iv, local_counter, plain_text);
+    socket_write(writer, &cipher_text).await
+}
+
+pub struct SessionRead {
+    read_half: OwnedReadHalf,
+    peer_cipher: Aes128Gcm,
+    peer_iv: [u8; IV_LEN],
+    peer_counter: usize,
+}
+
+impl SessionRead {
+    async fn socket_read(&mut self, buff: &mut [u8]) -> Result<usize, SessionError> {
+        socket_read(&mut self.read_half, buff).await
+    }
+
+    pub async fn receive_and_decrypt(mut self) -> Result<(SessionRead, Vec<u8>), SessionError> {
+        let mut message_len = [0; MESSAGE_LEN_LEN];
+        self.socket_read(&mut message_len).await?;
+        let recv_len = MessageLenType::from_be_bytes(message_len) as usize + AES_TAG_LEN;
+        if recv_len <= Session::MAX_RECV_SIZE {
+            let mut cipher_text = vec![0; recv_len];
+            let mut read = 0;
+            while read < recv_len {
+                read += self.socket_read(&mut cipher_text[read..]).await?;
+            }
+            let peer_nonce = iv_to_nonce(&self.peer_iv, &mut self.peer_counter);
+            let payload = Payload {
+                msg: &cipher_text,
+                aad: &message_len
+            };
+            match self.peer_cipher.decrypt(Nonce::from_slice(&peer_nonce), payload) {
+                Ok(plain_text) => Ok((self, unpad(plain_text))),
+                Err(_) => Err(SessionError::TransmissionCorrupted)
+            }
+        } else {
+            print_error!("Buffer too large: {} B", recv_len);
+            Err(SessionError::BufferTooLarge)
+        }
+    }
+}
+
+pub struct SessionWrite {
+    write_half: OwnedWriteHalf,
+    local_cipher: Aes128Gcm,
+    local_iv: [u8; IV_LEN],
+    local_counter: usize,
+}
+
+impl SessionWrite {
+    pub async fn encrypt_and_send(&mut self, plain_text: &[u8]) -> Result<(), SessionError> {
+        encrypt_and_send(&mut self.write_half, &self.local_cipher, &self.local_iv, &mut self.local_counter, plain_text).await
+    }
+    pub fn encrypt(&mut self, plain_text: &[u8]) -> Vec<u8> {
+        encrypt(&self.local_cipher, &self.local_iv, &mut self.local_counter, plain_text)
+    }
+    pub async fn socket_write(&mut self, cipher_text: &[u8]) -> Result<(), SessionError> {
+        socket_write(&mut self.write_half, cipher_text).await
+    }
+}
 
 pub struct Session {
     stream: TcpStream,
@@ -48,43 +177,34 @@ impl Session {
         }
     }
 
+    pub fn into_spit(self) -> Option<(SessionRead, SessionWrite)> {
+        let (read_half, write_half) = self.stream.into_split();
+        Some((
+            SessionRead {
+                read_half,
+                peer_cipher: self.peer_cipher?,
+                peer_iv: self.peer_iv?,
+                peer_counter: self.peer_counter,
+            },
+            SessionWrite {
+                write_half,
+                local_cipher: self.local_cipher?,
+                local_iv: self.local_iv?,
+                local_counter: self.local_counter,
+            }
+        ))
+    }
+
     pub fn get_ip(&self) -> IpAddr {
         self.stream.peer_addr().unwrap().ip()
     }
 
     async fn socket_read(&mut self, buff: &mut [u8]) -> Result<usize, SessionError> {
-        match self.stream.read(buff).await {
-            Ok(read) => {
-                if read > 0 {
-                    Ok(read)
-                } else {
-                    Err(SessionError::BrokenPipe)
-                }
-            }
-            Err(e) => {
-                match e.kind() {
-                    ErrorKind::ConnectionReset => Err(SessionError::ConnectionReset),
-                    _ => {
-                        print_error!("Receive error ({:?}): {}", e.kind(), e);
-                        Err(SessionError::Unknown)
-                    }
-                }
-            }
-        }        
+        socket_read(&mut self.stream, buff).await
     }
 
     pub async fn socket_write(&mut self, buff: &[u8]) -> Result<(), SessionError> {
-        match self.stream.write_all(buff).await {
-            Ok(_) => Ok(()),
-            Err(e) => Err(match e.kind() {
-                ErrorKind::BrokenPipe => SessionError::BrokenPipe,
-                ErrorKind::ConnectionReset => SessionError::ConnectionReset,
-                _ => {
-                    print_error!("Send error ({:?}): {}", e.kind(), e);
-                    SessionError::Unknown
-                }
-            })
-        }
+        socket_write(&mut self.stream, buff).await
     }
 
     async fn handshake_read(&mut self, buff: &mut [u8]) -> Result<(), SessionError> {
@@ -193,67 +313,8 @@ impl Session {
         }
         Err(SessionError::TransmissionCorrupted)
     }
-
-    fn random_pad(message: &[u8]) -> Vec<u8> {
-        let encoded_msg_len = (message.len() as MessageLenType).to_be_bytes();
-        let msg_len = message.len()+encoded_msg_len.len();
-        let mut len = 1000;
-        while len < msg_len {
-            len *= 2;
-        }
-        let mut output = Vec::from(encoded_msg_len);
-        output.reserve(len);
-        output.extend(message);
-        output.resize(len, 0);
-        OsRng.fill_bytes(&mut output[msg_len..]);
-        output
-    }
-
-    fn unpad(input: Vec<u8>) -> Vec<u8> {
-        let msg_len = MessageLenType::from_be_bytes(input[0..MESSAGE_LEN_LEN].try_into().unwrap()) as usize;
-        Vec::from(&input[MESSAGE_LEN_LEN..MESSAGE_LEN_LEN+msg_len])
-    }
-
-    pub fn encrypt(&mut self, message: &[u8]) -> Vec<u8> {
-        let padded_msg = Session::random_pad(message);
-        let cipher_len = (padded_msg.len() as MessageLenType).to_be_bytes();
-        let payload = Payload {
-            msg: &padded_msg,
-            aad: &cipher_len
-        };
-        let nonce = iv_to_nonce(&self.local_iv.unwrap(), &mut self.local_counter);
-        let cipher_text = self.local_cipher.as_ref().unwrap().encrypt(Nonce::from_slice(&nonce), payload).unwrap();
-        [&cipher_len, cipher_text.as_slice()].concat()
-    }
     
-    pub async fn encrypt_and_send(&mut self, message: &[u8]) -> Result<(), SessionError> {
-        let cipher_text = self.encrypt(message);
-        self.socket_write(&cipher_text).await
-    }
-
-    pub async fn receive_and_decrypt(&mut self) -> Result<Vec<u8>, SessionError> {
-        let mut message_len = [0; MESSAGE_LEN_LEN];
-        self.socket_read(&mut message_len).await?;
-        let recv_len = MessageLenType::from_be_bytes(message_len) as usize + AES_TAG_LEN;
-        if recv_len <= Session::MAX_RECV_SIZE {
-            let mut cipher_text = vec![0; recv_len];
-            let mut read = 0;
-            while read < recv_len {
-                read += self.socket_read(&mut cipher_text[read..]).await?;
-            }
-            let peer_nonce = iv_to_nonce(&self.peer_iv.unwrap(), &mut self.peer_counter);
-            let peer_cipher = self.peer_cipher.as_ref().unwrap();
-            let payload = Payload {
-                msg: &cipher_text,
-                aad: &message_len
-            };
-            match peer_cipher.decrypt(Nonce::from_slice(&peer_nonce), payload) {
-                Ok(plain_text) => Ok(Session::unpad(plain_text)),
-                Err(_) => Err(SessionError::TransmissionCorrupted)
-            }
-        } else {
-            print_error!("Buffer too large: {} B", recv_len);
-            Err(SessionError::BufferTooLarge)
-        }
+    pub async fn encrypt_and_send(&mut self, plain_text: &[u8]) -> Result<(), SessionError> {
+        encrypt_and_send(&mut self.stream, self.local_cipher.as_ref().unwrap(), self.local_iv.as_ref().unwrap(), &mut self.local_counter, plain_text).await
     }
 }
