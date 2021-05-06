@@ -7,7 +7,7 @@ let localIps = [];
 let currentSessionId = -1;
 let sessionsData = new Map();
 let msgHistory = new Map();
-let pendingFiles = new Map();
+let pendingFilesTransfers = new Map();
 
 function onClickSession(event) {
     let sessionId = event.currentTarget.getAttribute("data-sessionId");
@@ -163,9 +163,16 @@ document.getElementById("logout").onclick = function() {
     showPopup(mainDiv);
 }
 document.getElementById("attach_file").onchange = function(event) {
-    let file = event.target.files[0];
-    if (file.size > 32760000) {
-        if (pendingFiles.has(currentSessionId)) {
+    let files = event.target.files;
+    let useLargeFileTransfer = false;
+    for (let i=0; i<files.length; ++i) {
+        if (files[i].size > 32760000) {
+            useLargeFileTransfer = true;
+            break;
+        }
+    }
+    if (useLargeFileTransfer) {
+        if (pendingFilesTransfers.has(currentSessionId)) {
             let mainDiv = document.createElement("div");
             mainDiv.appendChild(generatePopupWarningTitle());
             let p = document.createElement("p");
@@ -173,28 +180,39 @@ document.getElementById("attach_file").onchange = function(event) {
             mainDiv.appendChild(p);
             showPopup(mainDiv);
         } else {
-            pendingFiles.set(currentSessionId, {
-                "file": file,
-                "name": file.name,
-                "size": file.size,
+            let fileTransfers = [];
+            let fileInfo = "";
+            for (let i=0; i<files.length; ++i) {
+                fileTransfers.push({
+                    "file": files[i],
+                    "name": files[i].name,
+                    "size": files[i].size,
+                    "transferred": 0,
+                    "lastChunk": Date.now()
+                });
+                fileInfo += ' '+files[i].size+' '+b64EncodeUnicode(files[i].name);
+            };
+            pendingFilesTransfers.set(currentSessionId, {
+                "files": fileTransfers,
+                "index": 0,
                 "state": "waiting",
-                "transferred": 0,
-                "lastChunk": Date.now()
             });
-            socket.send("large_file "+currentSessionId+" "+file.size+" "+file.name);
+            socket.send("large_files "+currentSessionId+fileInfo);
             displayChatBottom();
         }
     } else {
-        let formData = new FormData();
-        formData.append("session_id", currentSessionId);
-        formData.append("", file);
-        fetch("/send_file", {method: "POST", body: formData}).then(response => {
-            if (response.ok) {
-                response.text().then(uuid => onFileSent(currentSessionId, uuid, file.name));
-            } else {
-                console.log(response);
-            }
-        });
+        for (let i=0; i<files.length; ++i) {
+            let formData = new FormData();
+            formData.append("session_id", currentSessionId);
+            formData.append("", files[i]);
+            fetch("/send_file", {method: "POST", body: formData}).then(response => {
+                if (response.ok) {
+                    response.text().then(uuid => onFileSent(currentSessionId, uuid, files[i].name));
+                } else {
+                    console.log(response);
+                }
+            });
+        };
     }
 }
 document.getElementById("file_cancel").onclick = function() {
@@ -270,10 +288,10 @@ profile_div.onclick = function() {
             if (isIdentityProtected || newPassword_set) { //don't change password if identity is not protected and new password is blank
                 let msg = "change_password";
                 if (isIdentityProtected) {
-                    msg += " "+btoa(inputs[0].value);
+                    msg += " "+b64EncodeUnicode(inputs[0].value);
                 }
                 if (newPassword_set) {
-                    msg += " "+btoa(newPassword.value);
+                    msg += " "+b64EncodeUnicode(newPassword.value);
                 }
                 socket.send(msg);
             } else {
@@ -357,9 +375,9 @@ document.querySelector("#refresher button").onclick = function() {
 function humanFileSize(bytes, dp=1) {
     const thresh = 1000;
     if (Math.abs(bytes) < thresh) {
-      return bytes + ' B';
+      return bytes + " B";
     }
-    const units = ['kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+    const units = ["kB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
     let u = -1;
     const r = 10**dp;
     do {
@@ -367,6 +385,18 @@ function humanFileSize(bytes, dp=1) {
       ++u;
     } while (Math.round(Math.abs(bytes) * r) / r >= thresh && u < units.length - 1);
     return bytes.toFixed(dp) + ' ' + units[u];
+}
+//source: https://stackoverflow.com/a/30106551
+function b64EncodeUnicode(str) {
+    return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g,
+        function toSolidBytes(match, p1) {
+            return String.fromCharCode('0x' + p1);
+    }));
+}
+function b64DecodeUnicode(str) {
+    return decodeURIComponent(atob(str).split('').map(function(c) {
+        return '%' + ("00" + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(''));
 }
 //source: https://www.w3schools.com/js/js_cookies.asp
 function getCookie(cname) {
@@ -421,20 +451,20 @@ socket.onmessage = function(msg) {
             case "file":
                 onFileReceived(args[1], args[2], msg.data.slice(args[0].length+args[1].length+args[2].length+3));
                 break;
-            case "file_transfer":
-                onNewFileTransfer(args[1], args[2], args[3], args[4], args[5], args[6]);
+            case "files_transfer":
+                onNewFilesTransfer(args[1], args[2], msg.data.slice(args[0].length+args[1].length+args[2].length+3));
                 break;
-            case "ask_large_file":
-                onAskLargeFile(args[1], args[2], args[3], args[4]);
+            case "ask_large_files":
+                onAskLargeFiles(args[1], args[2], msg.data.slice(args[0].length+args[1].length+args[2].length+3));
                 break;
-            case "file_accepted":
-                onFileAccepted(args[1]);
+            case "files_accepted":
+                onFilesAccepted(args[1]);
                 break;
             case "aborted":
-                onFileAborted(args[1]);
+                onFilesTransferAborted(args[1]);
                 break;
             case "inc_file_transfer":
-                onIncFileTransfer(args[1], parseInt(args[2]));
+                onIncFilesTransfer(args[1], parseInt(args[2]));
                 break;
             case "load_sent_msg":
                 onMsgLoad(args[1], args[2] === "true", msg.data.slice(args[0].length+args[1].length+args[2].length+3));
@@ -532,33 +562,47 @@ function onNewMessage(sessionId, outgoing, msg) {
     msgHistory.get(sessionId).push([outgoing, false, msg]);
     onMsgOrFileReceived(sessionId, outgoing, msg);
 }
-function onNewFileTransfer(sessionId, encodedFileName, fileSize, state, transferred, lastChunk) {
-    pendingFiles.set(sessionId, {
-        "file": undefined,
-        "name": atob(encodedFileName),
-        "size": parseInt(fileSize),
-        "state": state,
-        "transferred": parseInt(transferred),
-        "lastChunk": parseInt(lastChunk)
+function onNewFilesTransfer(sessionId, index, filesInfo) {
+    let split = filesInfo.split(' ');
+    let files = [];
+    for (let i=0; i<split.length; i += 4) {
+        files.push({
+            "file": undefined,
+            "name": b64DecodeUnicode(split[i]),
+            "size": parseInt(split[i+1]),
+            "transferred": parseInt(split[i+2]),
+            "lastChunk": parseInt(split[i+3])
+        });
+    }
+    pendingFilesTransfers.set(sessionId, {
+        "files": files,
+        "index": parseInt(index),
+        "state": "transferring"
     });
     if (currentSessionId == sessionId) {
         displayChatBottom();
     }
 }
-function onAskLargeFile(sessionId, fileSize, encodedFileName, encodedDownloadLocation) {
+function onAskLargeFiles(sessionId, encodedDownloadLocation, filesInfo) {
     let sessionName = sessionsData.get(sessionId).name;
     let mainDiv = document.createElement("div");
     let h2 = document.createElement("h2");
-    h2.textContent = sessionName+" wants to send you a file:";
+    h2.textContent = sessionName+" wants to send you some files:";
     mainDiv.appendChild(h2);
-    let fileName = atob(encodedFileName);
-    let fileInfo = document.createElement("p");
-    generateFileInfo(fileName, fileSize, fileInfo);
-    mainDiv.appendChild(fileInfo);
+    let ul = document.createElement("ul");
+    let split = filesInfo.split(' ');
+    for (let i=0; i<split.length; i += 2) {
+        let p = document.createElement("p");
+        generateFileInfo(b64DecodeUnicode(split[i]), parseInt(split[i+1]), p);
+        let li = document.createElement("li");
+        li.appendChild(p);
+        ul.appendChild(li);
+    }
+    mainDiv.appendChild(ul);
     let spanDownloadLocation = document.createElement("span");
-    spanDownloadLocation.textContent = atob(encodedDownloadLocation);
+    spanDownloadLocation.textContent = b64DecodeUnicode(encodedDownloadLocation);
     let pQuestion = document.createElement("p");
-    pQuestion.appendChild(document.createTextNode("Download it in "));
+    pQuestion.appendChild(document.createTextNode("Download them in "));
     pQuestion.appendChild(spanDownloadLocation);
     pQuestion.appendChild(document.createTextNode(" ?"));
     mainDiv.appendChild(pQuestion);
@@ -568,13 +612,20 @@ function onAskLargeFile(sessionId, fileSize, encodedFileName, encodedDownloadLoc
     buttonDownload.textContent = "Download";
     buttonDownload.onclick = function() {
         removePopup();
-        pendingFiles.set(sessionId, {
-            "file": undefined,
-            "name": fileName,
-            "size": fileSize,
-            "state": "accepted",
-            "transferred": 0,
-            "lastChunk": Date.now()
+        let files = [];
+        for (let i=0; i<split.length; i += 2) {
+            files.push({
+                "file": undefined,
+                "name": b64DecodeUnicode(split[i]),
+                "size": parseInt(split[i+1]),
+                "transferred": 0,
+                "lastChunk": Date.now()
+            });
+        }
+        pendingFilesTransfers.set(sessionId, {
+            "files": files,
+            "index": 0,
+            "state": "transferring"
         });
         socket.send("download "+sessionId);
         if (currentSessionId == sessionId) {
@@ -593,47 +644,41 @@ function onAskLargeFile(sessionId, fileSize, encodedFileName, encodedDownloadLoc
     showPopup(mainDiv, false);
     if (document.hidden && notificationAllowed) {
         new Notification(sessionName, {
-            "body": fileName
+            "body": "Files download request"
         });
     }
 }
-function onFileAccepted(sessionId) {
-    if (pendingFiles.has(sessionId)) {
-        let file = pendingFiles.get(sessionId);
-        file.state = "sending";
-        file.lastChunk = Date.now();
-        if (currentSessionId == sessionId) {
-            displayChatBottom();
-        }
-        let formData = new FormData();
-        formData.append("session_id", currentSessionId);
-        formData.append("", file.file);
-        fetch("/send_large_file", {method: "POST", body: formData}).then(response => {
-            if (!response.ok) {
-                console.log(response);
-            }
-        });
+function onFilesAccepted(sessionId) {
+    if (pendingFilesTransfers.has(sessionId)) {
+        sendNextLargeFile(sessionId);
     }
 }
-function onFileAborted(sessionId) {
-    if (pendingFiles.has(sessionId)) {
-        pendingFiles.get(sessionId).state = "aborted";
+function onFilesTransferAborted(sessionId) {
+    if (pendingFilesTransfers.has(sessionId)) {
+        pendingFilesTransfers.get(sessionId).state = "aborted";
         if (sessionId == currentSessionId) {
             displayChatBottom();
         }
     }
 }
-function onIncFileTransfer(sessionId, chunkSize) {
-    if (pendingFiles.has(sessionId)) {
-        let file = pendingFiles.get(sessionId);
-        file.transferred += chunkSize;
+function onIncFilesTransfer(sessionId, chunkSize) {
+    if (pendingFilesTransfers.has(sessionId)) {
+        let filesTransfer = pendingFilesTransfers.get(sessionId);
+        let fileTransfer = filesTransfer.files[filesTransfer.index];
+        fileTransfer.transferred += chunkSize;
         let now = Date.now();
-        let speed = chunkSize/(now-file.lastChunk)*1000;
-        file.lastChunk = now;
-        if (file.transferred >= file.size) {
-            file.state = "completed";
-        } else {
-            file.state = "transferring";
+        let speed = chunkSize/(now-fileTransfer.lastChunk)*1000;
+        fileTransfer.lastChunk = now;
+        if (fileTransfer.transferred >= fileTransfer.size) {
+            if (filesTransfer.index == filesTransfer.files.length-1) {
+                filesTransfer.state = "completed";
+                socket.send("sending_ended "+sessionId);
+            } else {
+                filesTransfer.index += 1;
+                if (typeof fileTransfer.file !== "undefined") {
+                    sendNextLargeFile(sessionId);
+                }
+            }
         }
         if (currentSessionId == sessionId) {
             displayChatBottom(speed);
@@ -653,7 +698,7 @@ function onFileLoad(sessionId, outgoing, uuid, fileName) {
     }
 }
 function onDisconnected(sessionId) {
-    pendingFiles.delete(sessionId);
+    pendingFilesTransfers.delete(sessionId);
     let session = sessionsData.get(sessionId);
     if (session.isContact) {
         session.isOnline = false;
@@ -696,6 +741,23 @@ function onPasswordChanged(success, isProtected) {
     }
 }
 
+function sendNextLargeFile(sessionId) {
+    let filesTransfer = pendingFilesTransfers.get(sessionId);
+    filesTransfer.state = "transferring";
+    let fileTransfer = filesTransfer.files[filesTransfer.index];
+    fileTransfer.lastChunk = Date.now();
+    if (currentSessionId == sessionId) {
+        displayChatBottom();
+    }
+    let formData = new FormData();
+    formData.append("session_id", currentSessionId);
+    formData.append("", fileTransfer.file);
+    fetch("/send_large_file", {method: "POST", body: formData}).then(response => {
+        if (!response.ok) {
+            console.log(response);
+        }
+    });
+}
 function beautifyFingerprint(f) {
     for (let i=4; i<f.length; i+=5) {
         f = f.slice(0, i)+" "+f.slice(i);
@@ -758,17 +820,17 @@ function displayHeader() {
         }
     }
 }
-function showPopup(content, closeButton = true) {
+function showPopup(content, cancelable = true) {
     let popup_background = document.createElement("div");
     popup_background.classList.add("popup_background");
-    popup_background.onclick = function(e) {
-        if (e.target == popup_background) {
-            removePopup();
-        }
-    };
     let popup = document.createElement("div");
     popup.classList.add("popup");
-    if (closeButton) {
+    if (cancelable) {
+        popup_background.onclick = function(e) {
+            if (e.target == popup_background) {
+                removePopup();
+            }
+        };
         let close = document.createElement("button");
         close.classList.add("close");
         close.onclick = removePopup;
@@ -805,11 +867,6 @@ function generateSession(sessionId, session) {
     li.setAttribute("data-sessionId", sessionId);
     li.appendChild(generateAvatar(session.name));
     li.appendChild(generateName(session.name));
-    if (session.outgoing) {
-        li.classList.add("outgoing");
-    } else {
-        li.classList.add("incomming");
-    }
     if (session.isContact) {
         li.classList.add("is_contact");
     }
@@ -884,20 +941,22 @@ function generateFileInfo(fileName, fileSize, p) {
 }
 function displayChatBottom(speed = undefined) {
     let msgBox = document.getElementById("message_box");
+    let fileTransfer = document.getElementById("file_transfer");
     let session = sessionsData.get(currentSessionId);
     if (typeof session === "undefined") {
         msgBox.removeAttribute("style");
+        fileTransfer.classList.remove("active");
     } else {
         if (session.isOnline) {
             msgBox.style.display = "flex";
         } else {
             msgBox.removeAttribute("style");
         }
-        let fileTransfer = document.getElementById("file_transfer");
-        if (pendingFiles.has(currentSessionId)) {
-            let file = pendingFiles.get(currentSessionId);
+        if (pendingFilesTransfers.has(currentSessionId)) {
             let fileInfo = document.getElementById("file_info");
             fileInfo.innerHTML = "";
+            let filesTransfer = pendingFilesTransfers.get(currentSessionId);
+            let file = filesTransfer.files[filesTransfer.index];
             generateFileInfo(file.name, file.size, fileInfo);
             let fileProgress = document.getElementById("file_progress");
             fileProgress.style.display = "none"; //hide by default
@@ -906,7 +965,7 @@ function displayChatBottom(speed = undefined) {
             let fileCancel = document.getElementById("file_cancel");
             fileCancel.style.display = "none"; //hide by default
             document.querySelector("#file_progress_bar>div").style.width = 0;
-            switch (file.state) {
+            switch (filesTransfer.state) {
                 case "transferring":
                     fileCancel.removeAttribute("style"); //show
                     fileStatus.style.display = "none";
@@ -921,19 +980,13 @@ function displayChatBottom(speed = undefined) {
                 case "waiting":
                     fileStatus.textContent = "Waiting for peer confirmation...";
                     break;
-                case "accepted":
-                    fileStatus.textContent = "Downloading file...";
-                    break;
                 case "aborted":
                     fileStatus.textContent = "Transfer aborted.";
-                    pendingFiles.delete(currentSessionId);
-                    break;
-                case "sending":
-                    fileStatus.textContent = "Sending file...";
+                    pendingFilesTransfers.delete(currentSessionId);
                     break;
                 case "completed":
                     fileStatus.textContent = "Transfer completed.";
-                    pendingFiles.delete(currentSessionId);
+                    pendingFilesTransfers.delete(currentSessionId);
             }
             fileTransfer.classList.add("active");          
         } else {

@@ -54,11 +54,19 @@ input[type="file"] {
     right: 0;
     margin: auto;
     width: 40%;
+    max-height: 90vh;
+    overflow: auto;
     box-sizing: border-box;
-    padding: 20px 70px;
+    padding: 20px 70px 10px;
     background-color: #2B2F31;
     border-radius: 10px;
     font-size: 1.2em;
+}
+.popup:last-child::after {
+    content: "";
+    display: block;
+    height: 20px;
+    width: 100%;
 }
 .popup_background {
     height: 100%;
@@ -199,12 +207,6 @@ input[type="file"] {
 #left_panel ul li:hover, #left_panel ul li.current {
     background-color: #333940;
 }
-#left_panel ul li.output {
-    
-}
-#left_panel ul li.input {
-    
-}
 #left_panel ul li p::after {
     content: url("/static/imgs/icons/warning/FF3C00");
     display: inline-block;
@@ -250,7 +252,7 @@ input[type="file"] {
     background-color: unset;
     content: url("/static/imgs/icons/info/FF3C00");
 }
-ul.ips {
+.popup ul {
     list-style-type: unset;
 }
 #chat_header {

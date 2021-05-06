@@ -1,12 +1,12 @@
 use std::net::{IpAddr, TcpStream};
 use tungstenite::{WebSocket, protocol::Role, Message};
-use crate::{protocol, session_manager::LargeFileDownload};
+use crate::{protocol, session_manager::{LargeFileDownload, LargeFilesDownload}};
 
 mod ui_messages {
     use std::{fmt::Display, iter::FromIterator, net::IpAddr, str::from_utf8};
     use tungstenite::Message;
     use uuid::Uuid;
-    use crate::{print_error, session_manager::{protocol, LargeFileDownload, FileState}, utils::to_uuid_bytes};
+    use crate::{print_error, session_manager::{LargeFileDownload, LargeFilesDownload, protocol}, utils::to_uuid_bytes};
 
     const ON_NEW_MESSAGE: &str = "new_message";
     const LOAD_SENT_MESSAGE: &str = "load_sent_msg";
@@ -45,30 +45,40 @@ mod ui_messages {
             }
         }
     }
-    pub fn new_file_transfer(session_id: &usize, file_transfer: &LargeFileDownload) -> Message {
-        if file_transfer.state == FileState::ASKING {
-            on_ask_large_file(session_id, file_transfer.file_size, &file_transfer.file_name, &file_transfer.download_location)
-        } else {
-            Message::from(format!(
-                "file_transfer {} {} {} {} {} {}",
+    pub fn new_files_transfer(session_id: &usize, files_transfer: &LargeFilesDownload) -> Message {
+        if files_transfer.accepted {
+            let mut s = format!(
+                "files_transfer {} {}",
                 session_id,
-                base64::encode(&file_transfer.file_name),
-                file_transfer.file_size,
-                if file_transfer.state == FileState::ACCEPTED {
-                    "accepted"
-                } else {
-                    "transferring"
-                },
-                file_transfer.transferred,
-                file_transfer.last_chunk,
-            ))
+                files_transfer.index
+            );
+            files_transfer.files.iter().for_each(|file| {
+                s.push_str(&format!(
+                    " {} {} {} {}",
+                    base64::encode(&file.file_name),
+                    file.file_size,
+                    file.transferred,
+                    file.last_chunk,
+                ));
+            });
+            Message::from(s)
+        } else {
+            on_ask_large_files(session_id, &files_transfer.files, files_transfer.download_location.to_str().unwrap())   
         }
     }
-    pub fn on_ask_large_file(session_id: &usize, file_size: u64, file_name: &str, download_location: &str) -> Message {
-        Message::from(format!("ask_large_file {} {} {} {}", session_id, file_size, base64::encode(file_name), base64::encode(download_location)))
+    pub fn on_ask_large_files(session_id: &usize, files: &Vec<LargeFileDownload>, download_location: &str) -> Message {
+        let mut s = format!("ask_large_files {} {}", session_id, base64::encode(download_location));
+        files.into_iter().for_each(|file| {
+            s.push_str(&format!(
+                " {} {}",
+                base64::encode(&file.file_name),
+                file.file_size,
+            ));
+        });
+        Message::from(s)
     }
-    pub fn on_large_file_accepted(session_id: &usize) -> Message {
-        simple_event("file_accepted", session_id)
+    pub fn on_large_files_accepted(session_id: &usize) -> Message {
+        simple_event("files_accepted", session_id)
     }
     pub fn on_file_transfer_aborted(session_id: &usize) -> Message {
         simple_event("aborted", session_id)
@@ -76,7 +86,7 @@ mod ui_messages {
     pub fn on_new_message(session_id: &usize, outgoing: bool, buffer: &[u8]) -> Option<Message> {
         new_message(ON_NEW_MESSAGE, session_id, outgoing, &buffer[1..])
     }
-    pub fn inc_file_transfer(session_id: &usize, chunk_size: u64) -> Message {
+    pub fn inc_files_transfer(session_id: &usize, chunk_size: u64) -> Message {
         Message::from(format!("inc_file_transfer {} {}", session_id, chunk_size))
     }
     pub fn load_msg(session_id: &usize, outgoing: bool, buffer: &[u8]) -> Option<Message> {
@@ -138,16 +148,16 @@ impl UiConnection {
         let ui_message = match buffer[0] {
             protocol::Headers::MESSAGE => ui_messages::on_new_message(session_id, false, buffer),
             protocol::Headers::FILE => ui_messages::on_file_received(session_id, buffer),
-            protocol::Headers::ACCEPT_LARGE_FILE => Some(ui_messages::on_large_file_accepted(session_id)),
-            protocol::Headers::ABORT_FILE_TRANSFER => Some(ui_messages::on_file_transfer_aborted(session_id)),
+            protocol::Headers::ACCEPT_LARGE_FILES => Some(ui_messages::on_large_files_accepted(session_id)),
+            protocol::Headers::ABORT_FILES_TRANSFER => Some(ui_messages::on_file_transfer_aborted(session_id)),
             _ => None
         };
         if ui_message.is_some() {
             self.write_message(ui_message.unwrap())
         }
     }
-    pub fn on_ask_large_file(&mut self, session_id: &usize, file_size: u64, file_name: &str, download_location: &str) {
-        self.write_message(ui_messages::on_ask_large_file(session_id, file_size, file_name, download_location))
+    pub fn on_ask_large_files(&mut self, session_id: &usize, files: &Vec<LargeFileDownload>, download_location: &str) {
+        self.write_message(ui_messages::on_ask_large_files(session_id, files, download_location))
     }
     pub fn on_msg_sent(&mut self, session_id: usize, buffer: &[u8]) {
         match buffer[0] {
@@ -155,14 +165,14 @@ impl UiConnection {
                 Some(msg) => self.write_message(msg),
                 None => {}
             }
-            protocol::Headers::ABORT_FILE_TRANSFER => self.write_message(ui_messages::on_file_transfer_aborted(&session_id)),
+            protocol::Headers::ABORT_FILES_TRANSFER => self.write_message(ui_messages::on_file_transfer_aborted(&session_id)),
             _ => {}
         }
     }
-    pub fn on_new_session(&mut self, session_id: &usize, name: &str, outgoing: bool, fingerprint: &str, ip: IpAddr, file_transfer: Option<&LargeFileDownload>) {
+    pub fn on_new_session(&mut self, session_id: &usize, name: &str, outgoing: bool, fingerprint: &str, ip: IpAddr, files_transfer: Option<&LargeFilesDownload>) {
         self.write_message(ui_messages::on_new_session(session_id, name, outgoing, fingerprint, ip));
-        if let Some(file_transfer) = file_transfer {
-            self.write_message(ui_messages::new_file_transfer(session_id, file_transfer));
+        if let Some(files_transfer) = files_transfer {
+            self.write_message(ui_messages::new_files_transfer(session_id, files_transfer));
         }
     }
     pub fn on_disconnected(&mut self, session_id: &usize) {
@@ -172,8 +182,8 @@ impl UiConnection {
         self.write_message(ui_messages::on_name_told(session_id, name));
     }
 
-    pub fn inc_file_transfer(&mut self, session_id: &usize, chunk_size: u64) {
-        self.write_message(ui_messages::inc_file_transfer(session_id, chunk_size));
+    pub fn inc_files_transfer(&mut self, session_id: &usize, chunk_size: u64) {
+        self.write_message(ui_messages::inc_files_transfer(session_id, chunk_size));
     }
     pub fn set_as_contact(&mut self, session_id: usize, name: &str, verified: bool, fingerprint: &str) {
         self.write_message(ui_messages::set_as_contact(session_id, name, verified, fingerprint));

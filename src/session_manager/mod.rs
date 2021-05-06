@@ -1,7 +1,7 @@
 mod session;
 pub mod protocol;
 
-use std::{collections::HashMap, net::{IpAddr, SocketAddr}, io::{self, Write}, str::from_utf8, fs::OpenOptions, sync::{Mutex, RwLock, Arc}};
+use std::{collections::HashMap, fs::OpenOptions, io::{self, Write}, net::{IpAddr, SocketAddr}, path::PathBuf, str::from_utf8, sync::{Mutex, RwLock, Arc}};
 use tokio::{net::{TcpListener, TcpStream}, sync::mpsc::{self, Sender, Receiver}};
 use libmdns::Service;
 use strum_macros::Display;
@@ -24,34 +24,34 @@ pub enum SessionError {
     Unknown,
 }
 
-enum SessionCommand {
+pub enum SessionCommand {
     Send {
         buff: Vec<u8>,
     },
     SendEncryptedFileChunk {
-        sender: Sender<bool>,
-        last_chunk: bool,
+        ack_sender: Sender<bool>,
     },
     EncryptFileChunk {
         plain_text: Vec<u8>,
     },
+    SendingEnded,
     Close,
-}
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum FileState {
-    ASKING,
-    ACCEPTED,
-    TRANSFERRING,
 }
 
 #[derive(Clone)]
 pub struct LargeFileDownload {
     pub file_name: String,
-    pub download_location: String,
     pub file_size: u64,
-    pub state: FileState,
     pub transferred: u64,
     pub last_chunk: u128,
+}
+
+#[derive(Clone)]
+pub struct LargeFilesDownload {
+    pub download_location: PathBuf,
+    pub accepted: bool,
+    pub index: usize,
+    pub files: Vec<LargeFileDownload>,
 }
 
 #[derive(Clone)]
@@ -61,7 +61,7 @@ pub struct SessionData {
     pub peer_public_key: [u8; PUBLIC_KEY_LENGTH],
     pub ip: IpAddr,
     sender: Sender<SessionCommand>,
-    pub file_download: Option<LargeFileDownload>,
+    pub files_download: Option<LargeFilesDownload>,
 }
 
 pub struct SessionManager {
@@ -79,7 +79,7 @@ pub struct SessionManager {
 
 impl SessionManager {
 
-    fn with_ui_connection<F>(&self, f: F) where F: Fn(&mut UiConnection) {
+    fn with_ui_connection<F>(&self, f: F) where F: FnOnce(&mut UiConnection) {
         let mut ui_connection_opt = self.ui_connection.lock().unwrap();
         match ui_connection_opt.as_mut() {
             Some(ui_connection) => if ui_connection.is_valid {
@@ -119,44 +119,9 @@ impl SessionManager {
         }
     }
 
-    pub async fn encrypt_file_chunk(&self, session_id: &usize, plain_text: Vec<u8>) -> Result<(), SessionError> {
+    pub async fn send_command(&self, session_id: &usize, session_command: SessionCommand) -> Result<(), SessionError> {
         if let Some(sender) = self.get_session_sender(session_id) {
-            match sender.send(SessionCommand::EncryptFileChunk {
-                plain_text,
-            }).await {
-                Ok(_) => Ok(()),
-                Err(e) => {
-                    print_error!(e);
-                    Err(SessionError::BrokenPipe)
-                }
-            }
-        } else {
-            Err(SessionError::InvalidSessionId)
-        }
-    }
-
-    pub async fn send_encrypted_file_chunk(&self, session_id: &usize, ack_sender: Sender<bool>, last_chunk: bool) -> Result<(), SessionError> {
-        if let Some(sender) = self.get_session_sender(session_id) {
-            match sender.send(SessionCommand::SendEncryptedFileChunk {
-                sender: ack_sender,
-                last_chunk
-            }).await {
-                Ok(_) => Ok(()),
-                Err(e) => {
-                    print_error!(e);
-                    Err(SessionError::BrokenPipe)
-                }
-            }
-        } else {
-            Err(SessionError::InvalidSessionId)
-        }
-    }
-
-    pub async fn send_to(&self, session_id: &usize, message: Vec<u8>) -> Result<(), SessionError> {
-        if let Some(sender) = self.get_session_sender(session_id) {
-            match sender.send(SessionCommand::Send {
-                buff: message
-            }).await {
+            match sender.send(session_command).await {
                 Ok(_) => Ok(()),
                 Err(e) => {
                     print_error!(e);
@@ -179,10 +144,10 @@ impl SessionManager {
 
     async fn send_msg(&self, session_id: usize, session_write: &mut SessionWrite, buff: &[u8], is_sending: &mut bool, file_ack_sender: Option<&Sender<bool>>) -> Result<(), SessionError> {
         session_write.encrypt_and_send(&buff).await?;
-        if buff[0] == protocol::Headers::ACCEPT_LARGE_FILE {
-            self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_download.as_mut().unwrap().state = FileState::ACCEPTED;
-        } else if buff[0] == protocol::Headers::ABORT_FILE_TRANSFER {
-            self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_download = None;
+        if buff[0] == protocol::Headers::ACCEPT_LARGE_FILES {
+            self.sessions.write().unwrap().get_mut(&session_id).unwrap().files_download.as_mut().unwrap().accepted = true;
+        } else if buff[0] == protocol::Headers::ABORT_FILES_TRANSFER {
+            self.sessions.write().unwrap().get_mut(&session_id).unwrap().files_download = None;
             *is_sending = false;
             if let Some(sender) = file_ack_sender {
                 if let Err(e) = sender.send(false).await {
@@ -198,10 +163,10 @@ impl SessionManager {
 
     async fn session_worker(&self, session_id: usize, mut receiver: Receiver<SessionCommand>, session: Session) {
         //used when we receive large file
-        let mut local_file_path = None;
         let mut local_file_handle = None;
         //used when we send large file
         let mut next_chunk: Option<Vec<u8>> = None;
+        let mut last_chunks_sizes: Option<Vec<u32>> = None;
         let mut file_ack_sender: Option<Sender<bool>> = None;
         let mut msg_queue = Vec::new();
         let mut is_sending = false;
@@ -230,13 +195,14 @@ impl SessionManager {
                                 protocol::Headers::TELL_NAME => {
                                     match from_utf8(&buffer[1..]) {
                                         Ok(new_name) => {
+                                            let new_name = new_name.replace('\n', " ");
                                             self.with_ui_connection(|ui_connection| {
-                                                ui_connection.on_name_told(&session_id, new_name);
+                                                ui_connection.on_name_told(&session_id, &new_name);
                                             });
                                             let mut loaded_contacts = self.loaded_contacts.write().unwrap();
                                             if let Some(contact) = loaded_contacts.get_mut(&session_id) {
                                                 contact.name = new_name.to_string();
-                                                if let Err(e) = self.identity.read().unwrap().as_ref().unwrap().change_contact_name(&contact.uuid, new_name) {
+                                                if let Err(e) = self.identity.read().unwrap().as_ref().unwrap().change_contact_name(&contact.uuid, &new_name) {
                                                     print_error!(e);
                                                 }
                                             } else {
@@ -246,53 +212,52 @@ impl SessionManager {
                                         Err(e) => print_error!(e)
                                     }
                                 }
-                                protocol::Headers::ASK_LARGE_FILE => {
-                                    if self.sessions.read().unwrap().get(&session_id).unwrap().file_download.is_none() && !is_sending { //don't accept 2 file transfers at the same time
-                                        if let Some((file_size, file_name)) = protocol::parse_ask_file(&buffer) {
-                                            let download_dir = UserDirs::new().unwrap().download_dir;
-                                            self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_download = Some(LargeFileDownload{
-                                                file_name: file_name.clone(),
-                                                download_location: download_dir.to_str().unwrap().to_string(),
-                                                file_size,
-                                                state: FileState::ASKING,
-                                                transferred: 0,
-                                                last_chunk: get_unix_timestamp(),
+                                protocol::Headers::ASK_LARGE_FILES => {
+                                    if self.sessions.read().unwrap().get(&session_id).unwrap().files_download.is_none() && !is_sending { //don't accept 2 file transfers at the same time
+                                        if let Some(files_info) = protocol::parse_ask_files(&buffer) {
+                                            let download_location = UserDirs::new().unwrap().download_dir;
+                                            let files: Vec<LargeFileDownload> = files_info.into_iter().map(|info| {
+                                                LargeFileDownload {
+                                                    file_name: info.1,
+                                                    file_size: info.0,
+                                                    transferred: 0,
+                                                    last_chunk: get_unix_timestamp(),
+                                                }
+                                            }).collect();
+                                            self.sessions.write().unwrap().get_mut(&session_id).unwrap().files_download = Some(LargeFilesDownload {
+                                                download_location: download_location.clone(),
+                                                accepted: false,
+                                                index: 0,
+                                                files: files.clone(),
                                             });
-                                            local_file_path = Some(get_not_used_path(&file_name, &download_dir));
                                             self.with_ui_connection(|ui_connection| {
-                                                ui_connection.on_ask_large_file(&session_id, file_size, &file_name, download_dir.to_str().unwrap());
+                                                ui_connection.on_ask_large_files(&session_id, &files, download_location.to_str().unwrap());
                                             })
                                         }
-                                    } else if let Err(e) = session_write.encrypt_and_send(&[protocol::Headers::ABORT_FILE_TRANSFER]).await {
+                                    } else if let Err(e) = session_write.encrypt_and_send(&[protocol::Headers::ABORT_FILES_TRANSFER]).await {
                                         print_error!(e);
                                         break;
                                     }
                                 }
                                 protocol::Headers::LARGE_FILE_CHUNK => {
-                                    let state = {
-                                        let sessions = self.sessions.read().unwrap();
-                                        match sessions.get(&session_id).unwrap().file_download.as_ref() {
-                                            Some(file_transfer) => Some(file_transfer.state),
-                                            None => None
-                                        }
-                                    };
                                     let mut should_accept_chunk = false;
-                                    if let Some(state) = state {
-                                        if state == FileState::ACCEPTED {
-                                            if let Some(file_path) = local_file_path.as_ref() {
-                                                match OpenOptions::new().append(true).create(true).open(file_path) {
-                                                    Ok(file) => {
-                                                        local_file_handle = Some(file);
-                                                        let mut sessions = self.sessions.write().unwrap();
-                                                        let file_transfer = sessions.get_mut(&session_id).unwrap().file_download.as_mut().unwrap();
-                                                        file_transfer.state = FileState::TRANSFERRING;
-                                                        should_accept_chunk = true;
+                                    {
+                                        let sessions = self.sessions.read().unwrap();
+                                        if let Some(files_transfer) = sessions.get(&session_id).unwrap().files_download.as_ref() {
+                                            if files_transfer.accepted {
+                                                if local_file_handle.is_some() {
+                                                    should_accept_chunk = true;
+                                                } else {
+                                                    let local_file_path = get_not_used_path(&files_transfer.files[files_transfer.index].file_name, &files_transfer.download_location);
+                                                    match OpenOptions::new().append(true).create(true).open(local_file_path) {
+                                                        Ok(file) => {
+                                                            local_file_handle = Some(file);
+                                                            should_accept_chunk = true;
+                                                        }
+                                                        Err(e) => print_error!(e)
                                                     }
-                                                    Err(e) => print_error!(e)
                                                 }
                                             }
-                                        } else if state == FileState::TRANSFERRING {
-                                            should_accept_chunk = true;
                                         }
                                     }
                                     if should_accept_chunk {
@@ -303,12 +268,16 @@ impl SessionManager {
                                                     let chunk_size = (buffer.len()-1) as u64;
                                                     {
                                                         let mut sessions = self.sessions.write().unwrap();
-                                                        let file_transfer = sessions.get_mut(&session_id).unwrap().file_download.as_mut().unwrap();
+                                                        let files_transfer = sessions.get_mut(&session_id).unwrap().files_download.as_mut().unwrap();
+                                                        let file_transfer = &mut files_transfer.files[files_transfer.index];
                                                         file_transfer.last_chunk = get_unix_timestamp();
                                                         file_transfer.transferred += chunk_size;
                                                         if file_transfer.transferred >= file_transfer.file_size { //we downloaded all the file
-                                                            sessions.get_mut(&session_id).unwrap().file_download = None;
-                                                            local_file_path = None;
+                                                            if files_transfer.index+1 == files_transfer.files.len() {
+                                                                sessions.get_mut(&session_id).unwrap().files_download = None;
+                                                            } else {
+                                                                files_transfer.index += 1;
+                                                            }
                                                             local_file_handle = None;
                                                         }
                                                     }
@@ -317,7 +286,7 @@ impl SessionManager {
                                                         break;
                                                     }
                                                     self.with_ui_connection(|ui_connection| {
-                                                        ui_connection.inc_file_transfer(&session_id, chunk_size);
+                                                        ui_connection.inc_files_transfer(&session_id, chunk_size);
                                                     });
                                                     is_success = true;
                                                 }
@@ -325,10 +294,9 @@ impl SessionManager {
                                             }
                                         }
                                         if !is_success {
-                                            self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_download = None;
-                                            local_file_path = None;
+                                            self.sessions.write().unwrap().get_mut(&session_id).unwrap().files_download = None;
                                             local_file_handle = None;
-                                            if let Err(e) = session_write.encrypt_and_send(&[protocol::Headers::ABORT_FILE_TRANSFER]).await {
+                                            if let Err(e) = session_write.encrypt_and_send(&[protocol::Headers::ABORT_FILES_TRANSFER]).await {
                                                 print_error!(e);
                                                 break;
                                             }
@@ -337,9 +305,10 @@ impl SessionManager {
                                 }
                                 protocol::Headers::ACK_CHUNK => {
                                     if let Some(sender) = file_ack_sender.clone() {
-                                        if let Some(next_chunk) = next_chunk.as_ref() {
+                                        if let Some(last_chunks_sizes) = last_chunks_sizes.as_mut() {
+                                            let chunk_size = last_chunks_sizes.remove(0);
                                             self.with_ui_connection(|ui_connection| {
-                                                ui_connection.inc_file_transfer(&session_id, next_chunk.len() as u64);
+                                                ui_connection.inc_files_transfer(&session_id, chunk_size.into());
                                             });
                                         }
                                         if sender.send(true).await.is_err() {
@@ -347,15 +316,14 @@ impl SessionManager {
                                         }
                                     }
                                 }
-                                protocol::Headers::ABORT_FILE_TRANSFER => {
+                                protocol::Headers::ABORT_FILES_TRANSFER => {
                                     if let Some(sender) = file_ack_sender.clone() {
                                         if let Err(e) = sender.send(false).await {
                                             print_error!(e);
                                         }
                                         is_sending = false;
                                     }
-                                    self.sessions.write().unwrap().get_mut(&session_id).unwrap().file_download = None;
-                                    local_file_path = None;
+                                    self.sessions.write().unwrap().get_mut(&session_id).unwrap().files_download = None;
                                     local_file_handle = None;
                                     self.with_ui_connection(|ui_connection| {
                                         ui_connection.on_received(&session_id, &buffer);
@@ -387,8 +355,9 @@ impl SessionManager {
                                         let is_classical_message = header == protocol::Headers::MESSAGE || header == protocol::Headers::FILE;
                                         if is_classical_message {
                                             self.set_seen(session_id, false);
-                                        } else if header == protocol::Headers::ACCEPT_LARGE_FILE {
+                                        } else if header == protocol::Headers::ACCEPT_LARGE_FILES {
                                             is_sending = true;
+                                            last_chunks_sizes = Some(Vec::new());
                                         }
                                         self.with_ui_connection(|ui_connection| {
                                             ui_connection.on_received(&session_id, buffer.as_ref().unwrap());
@@ -421,12 +390,15 @@ impl SessionManager {
                                 }
                             }
                         }
-                        SessionCommand::EncryptFileChunk { plain_text } => next_chunk = Some(session_write.encrypt(&plain_text)),
-                        SessionCommand::SendEncryptedFileChunk { sender, last_chunk } => {
+                        SessionCommand::EncryptFileChunk { plain_text } => {
+                            last_chunks_sizes.as_mut().unwrap().push(plain_text.len() as u32);
+                            next_chunk = Some(session_write.encrypt(&plain_text));
+                        }
+                        SessionCommand::SendEncryptedFileChunk { ack_sender } => {
                             if let Some(chunk) = next_chunk.as_ref() {
                                 match session_write.socket_write(chunk).await {
                                     Ok(_) => {
-                                        file_ack_sender = Some(sender);
+                                        file_ack_sender = Some(ack_sender);
                                         //once the pre-encrypted chunk is sent, we can send the pending messages
                                         while msg_queue.len() > 0 {
                                             let msg = msg_queue.remove(0);
@@ -434,9 +406,6 @@ impl SessionManager {
                                                 print_error!(e);
                                                 break;
                                             }
-                                        }
-                                        if last_chunk {
-                                            is_sending = false;
                                         }
                                     }
                                     Err(e) => {
@@ -446,12 +415,9 @@ impl SessionManager {
                                 }
                             }
                         }
+                        SessionCommand::SendingEnded => is_sending = false,
                         SessionCommand::Close => break
                     }
-                }
-                else => {
-                    println!("{} dead", session_id);
-                    break;
                 }
             }
         }
@@ -508,7 +474,7 @@ impl SessionManager {
                             peer_public_key,
                             ip,
                             sender: sender,
-                            file_download: None,
+                            files_download: None,
                         };
                         let mut session_id = None;
                         for (i, contact) in session_manager.loaded_contacts.read().unwrap().iter() {

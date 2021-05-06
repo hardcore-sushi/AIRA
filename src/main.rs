@@ -20,7 +20,7 @@ use platform_dirs::AppDirs;
 use zeroize::Zeroize;
 use utils::escape_double_quote;
 use identity::Identity;
-use session_manager::{SessionManager, protocol};
+use session_manager::{SessionManager, SessionCommand, protocol};
 use ui_interface::UiConnection;
 
 async fn start_websocket_server(global_vars: Arc<RwLock<GlobalVars>>) -> u16 {
@@ -104,7 +104,7 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
             session.1.outgoing,
             &crypto::generate_fingerprint(&session.1.peer_public_key),
             session.1.ip,
-            session.1.file_download.as_ref()
+            session.1.files_download.as_ref()
         );
     });
     {
@@ -156,28 +156,44 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                 "send" => {
                                     let session_id: usize = args[1].parse().unwrap();
                                     let buffer = protocol::new_message(msg[args[0].len()+args[1].len()+2..].to_string());
-                                    match session_manager.send_to(&session_id, buffer.clone()).await {
+                                    match session_manager.send_command(&session_id, SessionCommand::Send {
+                                        buff: buffer.clone()
+                                    }).await {
                                         Ok(_) => session_manager.store_msg(&session_id, true, buffer),
                                         Err(e) => print_error!(e)
                                     }
                                 }
-                                "large_file" => {
+                                "large_files" => {
                                     let session_id: usize = args[1].parse().unwrap();
-                                    let file_size: u64 = args[2].parse().unwrap();
-                                    let file_name = &msg[args[0].len()+args[1].len()+args[2].len()+3..];
-                                    if let Err(e) = session_manager.send_to(&session_id, protocol::ask_large_file(file_size, file_name)).await {
+                                    let mut file_info = Vec::new();
+                                    for n in (2..args.len()).step_by(2) {
+                                        file_info.push((args[n].parse::<u64>().unwrap(), base64::decode(args[n+1]).unwrap()));
+                                    }
+                                    if let Err(e) = session_manager.send_command(&session_id, SessionCommand::Send {
+                                        buff: protocol::ask_large_files(file_info)
+                                    }).await {
                                         print_error!(e);
                                     }
                                 }
                                 "download" => {
                                     let session_id: usize = args[1].parse().unwrap();
-                                    if let Err(e) = session_manager.send_to(&session_id, vec![protocol::Headers::ACCEPT_LARGE_FILE]).await {
+                                    if let Err(e) = session_manager.send_command(&session_id, SessionCommand::Send {
+                                        buff: vec![protocol::Headers::ACCEPT_LARGE_FILES]
+                                    }).await {
                                         print_error!(e);
                                     }
                                 }
                                 "abort" => {
                                     let session_id: usize = args[1].parse().unwrap();
-                                    if let Err(e) = session_manager.send_to(&session_id, vec![protocol::Headers::ABORT_FILE_TRANSFER]).await {
+                                    if let Err(e) = session_manager.send_command(&session_id, SessionCommand::Send {
+                                        buff: vec![protocol::Headers::ABORT_FILES_TRANSFER]
+                                    }).await {
+                                        print_error!(e);
+                                    }
+                                }
+                                "sending_ended" => {
+                                    let session_id: usize = args[1].parse().unwrap();
+                                    if let Err(e) = session_manager.send_command(&session_id, SessionCommand::SendingEnded).await {
                                         print_error!(e);
                                     }
                                 }
@@ -324,7 +340,9 @@ async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpRespo
                         while let Some(Ok(chunk)) = field.next().await {
                             buffer.extend(chunk);
                         }
-                        match global_vars_read.session_manager.send_to(&session_id,  protocol::file(filename, &buffer)).await {
+                        match global_vars_read.session_manager.send_command(&session_id,  SessionCommand::Send {
+                            buff: protocol::file(filename, &buffer)
+                        }).await {
                             Ok(_) => {
                                 match global_vars_read.session_manager.store_file(&session_id, &buffer) {
                                     Ok(file_uuid) => {
@@ -359,15 +377,18 @@ async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpRespo
                                     break;
                                 }
                             }
-                            if let Err(e) = global_vars_read.session_manager.encrypt_file_chunk(&session_id, chunk_buffer.clone()).await {
+                            if let Err(e) = global_vars_read.session_manager.send_command(&session_id, SessionCommand::EncryptFileChunk{
+                                plain_text: chunk_buffer.clone()
+                            }).await {
                                 print_error!(e);
                                 return HttpResponse::InternalServerError().finish();
                             }
-                            let last_chunk = chunk_buffer.len() < constants::FILE_CHUNK_SIZE;
                             if !match ack_receiver.recv().await {
                                 Some(should_continue) => {
                                     //send previous encrypted chunk even if transfert is aborted to keep PSEC nonces syncrhonized
-                                    if let Err(e) = global_vars_read.session_manager.send_encrypted_file_chunk(&session_id, ack_sender.clone(), last_chunk).await {
+                                    if let Err(e) = global_vars_read.session_manager.send_command(&session_id, SessionCommand::SendEncryptedFileChunk {
+                                        ack_sender: ack_sender.clone()
+                                    }).await {
                                         print_error!(e);
                                         false
                                     } else {
@@ -378,7 +399,7 @@ async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpRespo
                             } {
                                 return HttpResponse::InternalServerError().finish()
                             }
-                            if last_chunk {
+                            if chunk_buffer.len() < constants::FILE_CHUNK_SIZE {
                                 break;
                             } else {
                                 chunk_buffer.truncate(1);
@@ -540,8 +561,19 @@ fn handle_static(req: HttpRequest) -> HttpResponse {
     if splits[0] == "static" {
         let mut response_builder = HttpResponse::Ok();
         match splits[1] {
-            "index.js" => return response_builder.content_type(JS_CONTENT_TYPE).body(include_str!("frontend/index.js")),
-            "index.css" => return response_builder.body(include_str!("frontend/index.css")),
+            "index.js" => {
+                response_builder.content_type(JS_CONTENT_TYPE);
+                #[cfg(debug_assertions)]
+                return response_builder.body(fs::read_to_string("src/frontend/index.js").unwrap());
+                #[cfg(not(debug_assertions))]
+                return response_builder.body(include_str!("frontend/index.js"));
+            }
+            "index.css" => {
+                #[cfg(debug_assertions)]
+                return response_builder.body(fs::read_to_string("src/frontend/index.css").unwrap());
+                #[cfg(not(debug_assertions))]
+                return response_builder.body(include_str!("frontend/index.css"));
+            }
             "imgs" => {
                 if splits[2] == "icons" && splits.len() <= 5 {
                     let color = if splits.len() == 5 {
