@@ -142,17 +142,18 @@ impl SessionManager {
         self.not_seen.write().unwrap().retain(|x| x != session_id);
     }
 
-    async fn send_msg(&self, session_id: usize, session_write: &mut SessionWrite, buff: &[u8], is_sending: &mut bool, file_ack_sender: Option<&Sender<bool>>) -> Result<(), SessionError> {
+    async fn send_msg(&self, session_id: usize, session_write: &mut SessionWrite, buff: &[u8], is_sending: &mut bool, file_ack_sender: &mut Option<Sender<bool>>) -> Result<(), SessionError> {
         session_write.encrypt_and_send(&buff).await?;
         if buff[0] == protocol::Headers::ACCEPT_LARGE_FILES {
             self.sessions.write().unwrap().get_mut(&session_id).unwrap().files_download.as_mut().unwrap().accepted = true;
         } else if buff[0] == protocol::Headers::ABORT_FILES_TRANSFER {
             self.sessions.write().unwrap().get_mut(&session_id).unwrap().files_download = None;
             *is_sending = false;
-            if let Some(sender) = file_ack_sender {
-                if let Err(e) = sender.send(false).await {
+            if let Some(ack_sender) = file_ack_sender {
+                if let Err(e) = ack_sender.send(false).await {
                     print_error!(e);
                 }
+                *file_ack_sender = None;
             }
         }
         self.with_ui_connection(|ui_connection| {
@@ -304,24 +305,26 @@ impl SessionManager {
                                     }
                                 }
                                 protocol::Headers::ACK_CHUNK => {
-                                    if let Some(sender) = file_ack_sender.clone() {
+                                    if let Some(ack_sender) = file_ack_sender.clone() {
                                         if let Some(last_chunks_sizes) = last_chunks_sizes.as_mut() {
                                             let chunk_size = last_chunks_sizes.remove(0);
                                             self.with_ui_connection(|ui_connection| {
                                                 ui_connection.inc_files_transfer(&session_id, chunk_size.into());
                                             });
                                         }
-                                        if sender.send(true).await.is_err() {
+                                        if ack_sender.send(true).await.is_err() {
                                             is_sending = false;
                                         }
+                                        file_ack_sender = None;
                                     }
                                 }
                                 protocol::Headers::ABORT_FILES_TRANSFER => {
-                                    if let Some(sender) = file_ack_sender.clone() {
-                                        if let Err(e) = sender.send(false).await {
+                                    if let Some(ack_sender) = file_ack_sender.clone() {
+                                        if let Err(e) = ack_sender.send(false).await {
                                             print_error!(e);
                                         }
                                         is_sending = false;
+                                        file_ack_sender = None;
                                     }
                                     self.sessions.write().unwrap().get_mut(&session_id).unwrap().files_download = None;
                                     local_file_handle = None;
@@ -384,7 +387,7 @@ impl SessionManager {
                             if is_sending {
                                 msg_queue.push(buff);
                             } else {
-                                if let Err(e) = self.send_msg(session_id, &mut session_write, &buff, &mut is_sending, file_ack_sender.as_ref()).await {
+                                if let Err(e) = self.send_msg(session_id, &mut session_write, &buff, &mut is_sending, &mut file_ack_sender).await {
                                     print_error!(e);
                                     break;
                                 }
@@ -402,7 +405,7 @@ impl SessionManager {
                                         //once the pre-encrypted chunk is sent, we can send the pending messages
                                         while msg_queue.len() > 0 {
                                             let msg = msg_queue.remove(0);
-                                            if let Err(e) = self.send_msg(session_id, &mut session_write, &msg, &mut is_sending, file_ack_sender.as_ref()).await {
+                                            if let Err(e) = self.send_msg(session_id, &mut session_write, &msg, &mut is_sending, &mut file_ack_sender).await {
                                                 print_error!(e);
                                                 break;
                                             }
