@@ -475,7 +475,11 @@ fn handle_login(req: HttpRequest, mut params: web::Form<LoginParams>) -> HttpRes
 }
 
 fn get_login_body(error_msg: Option<&str>) -> Result<String, rusqlite::Error> {
-    Ok(include_str!("frontend/login.html")
+    #[cfg(debug_assertions)]
+    let html = fs::read_to_string("src/frontend/login.html").unwrap();
+    #[cfg(not(debug_assertions))]
+    let html = include_str!(concat!(env!("OUT_DIR"), "/login.html"));
+    Ok(html
         .replace("ERROR_MSG", &match error_msg {
             Some(error_msg) => format!("Error: {}.", error_msg),
             None => String::new()
@@ -546,7 +550,7 @@ async fn handle_index(req: HttpRequest) -> HttpResponse {
         #[cfg(debug_assertions)]
         let html = fs::read_to_string("src/frontend/index.html").unwrap();
         #[cfg(not(debug_assertions))]
-        let html = include_str!("frontend/index.html");
+        let html = include_str!(concat!(env!("OUT_DIR"), "/index.html"));
         HttpResponse::Ok().body(
             html
                 .replace("AIRA_VERSION", env!("CARGO_PKG_VERSION"))
@@ -571,13 +575,13 @@ fn handle_static(req: HttpRequest) -> HttpResponse {
                 #[cfg(debug_assertions)]
                 return response_builder.body(fs::read_to_string("src/frontend/index.js").unwrap());
                 #[cfg(not(debug_assertions))]
-                return response_builder.body(include_str!("frontend/index.js"));
+                return response_builder.body(include_str!(concat!(env!("OUT_DIR"), "/index.js")));
             }
             "index.css" => {
                 #[cfg(debug_assertions)]
                 return response_builder.body(fs::read_to_string("src/frontend/index.css").unwrap());
                 #[cfg(not(debug_assertions))]
-                return response_builder.body(include_str!("frontend/index.css"));
+                return response_builder.body(include_str!(concat!(env!("OUT_DIR"), "/index.css")));
             }
             "imgs" => {
                 if splits[2] == "icons" && splits.len() <= 5 {
@@ -625,12 +629,18 @@ fn handle_static(req: HttpRequest) -> HttpResponse {
             "commons" => {
                 if splits.len() == 3 {
                     match splits[2] {
-                        "script.js" => return response_builder.content_type(JS_CONTENT_TYPE).body(include_str!("frontend/commons/script.js")),
+                        "script.js" => {
+                            response_builder.content_type(JS_CONTENT_TYPE);
+                            #[cfg(debug_assertions)]
+                            return response_builder.body(fs::read_to_string("src/frontend/commons/script.js").unwrap());
+                            #[cfg(not(debug_assertions))]
+                            return response_builder.body(include_str!(concat!(env!("OUT_DIR"), "/commons/script.js")))
+                        }
                         "style.css" => {
                             #[cfg(debug_assertions)]
                             return response_builder.body(fs::read_to_string("src/frontend/commons/style.css").unwrap());
                             #[cfg(not(debug_assertions))]
-                            return response_builder.body(include_str!("frontend/commons/style.css"));
+                            return response_builder.body(include_str!(concat!(env!("OUT_DIR"), "/commons/style.css")));
                         }
                         _ => {}
                     }

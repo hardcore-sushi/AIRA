@@ -37,3 +37,6 @@ pnet_datalink = "0.27.2"
 base64 = "0.13.0"
 scrypt = "0.7.0"
 zeroize = "1.2.0"
+
+[build-dependencies]
+html-minifier = "3.0.11"

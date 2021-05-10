@@ -21,7 +21,7 @@ function onClickSession(event) {
         displaySessions();
         displayHeader();
         displayChatBottom();
-        dislayHistory();
+        displayHistory();
     }
 }
 let ip_input = document.getElementById("ip_input");
@@ -45,7 +45,7 @@ document.getElementById("show_local_ips").onclick = function() {
     }
     mainDiv.appendChild(ul);
     showPopup(mainDiv);
-}
+};
 let message_input = document.getElementById("message_input");
 message_input.addEventListener("keyup", function(event) {
     if (event.key === "Enter") {
@@ -68,17 +68,17 @@ document.getElementById("delete_conversation").onclick = function() {
         socket.send("delete_conversation "+currentSessionId);
         msgHistory.get(currentSessionId).length = 0;
         removePopup();
-        dislayHistory();
-    }
+        displayHistory();
+    };
     mainDiv.appendChild(button);
     showPopup(mainDiv);
-}
+};
 document.getElementById("add_contact").onclick = function() {
     socket.send("contact "+currentSessionId+" "+sessionsData.get(currentSessionId).name);
     sessionsData.get(currentSessionId).isContact = true;
     displayHeader();
     displaySessions();
-}
+};
 document.getElementById("remove_contact").onclick = function() {
     let mainDiv = document.createElement("div");
     mainDiv.appendChild(generatePopupWarningTitle());
@@ -101,12 +101,12 @@ document.getElementById("remove_contact").onclick = function() {
         }
         displayHeader();
         displaySessions();
-        dislayHistory();
+        displayHistory();
         removePopup();
-    }
+    };
     mainDiv.appendChild(button);
     showPopup(mainDiv);
-}
+};
 document.getElementById("verify").onclick = function() {
     let session = sessionsData.get(currentSessionId);
     if (typeof session !== "undefined") {
@@ -146,7 +146,7 @@ document.getElementById("verify").onclick = function() {
         mainDiv.appendChild(buttonRow);
         showPopup(mainDiv);
     }
-}
+};
 document.getElementById("logout").onclick = function() {
     let mainDiv = document.createElement("div");
     mainDiv.appendChild(generatePopupWarningTitle());
@@ -161,7 +161,7 @@ document.getElementById("logout").onclick = function() {
     button.onclick = logout;
     mainDiv.appendChild(button);
     showPopup(mainDiv);
-}
+};
 document.getElementById("attach_file").onchange = function(event) {
     let files = event.target.files;
     let useLargeFileTransfer = false;
@@ -214,10 +214,10 @@ document.getElementById("attach_file").onchange = function(event) {
             });
         };
     }
-}
+};
 document.getElementById("file_cancel").onclick = function() {
     socket.send("abort "+currentSessionId);
-}
+};
 let msg_log = document.getElementById("msg_log");
 msg_log.onscroll = function() {
     if (sessionsData.get(currentSessionId).isContact) {
@@ -225,7 +225,7 @@ msg_log.onscroll = function() {
             socket.send("load_msgs "+currentSessionId);
         }
     }
-}
+};
 let profile_div = document.querySelector("#me>div");
 profile_div.onclick = function() {
     let mainDiv = document.createElement("div");
@@ -327,14 +327,14 @@ profile_div.onclick = function() {
         deleteButton.textContent = "Delete";
         deleteButton.onclick = function() {
             socket.send("disappear");
-        }
+        };
         mainDiv.appendChild(deleteButton);
         showPopup(mainDiv);
-    }
+    };
     sectionDelete.appendChild(deleteButton);
     mainDiv.appendChild(sectionDelete);
     showPopup(mainDiv);
-}
+};
 let chatHeader = document.getElementById("chat_header");
 chatHeader.children[0].onclick = function() {
     let session = sessionsData.get(currentSessionId);
@@ -366,10 +366,10 @@ chatHeader.children[0].onclick = function() {
         }
         showPopup(mainDiv);
     }
-}
+};
 document.querySelector("#refresher button").onclick = function() {
     socket.send("refresh");
-}
+};
 
 //source: https://stackoverflow.com/a/14919494
 function humanFileSize(bytes, dp=1) {
@@ -423,7 +423,7 @@ socket.onopen = function() {
         if (currentSessionId != -1) {
             socket.send("set_seen "+currentSessionId);
         }
-    }
+    };
     if (Notification.permission === "granted") {
         notificationAllowed = true;
     } else if (Notification.permission !== "denied") {
@@ -494,10 +494,10 @@ socket.onmessage = function(msg) {
                 logout();
         }
     }
-}
+};
 socket.onclose = function() {
     console.log("Disconnected");
-}
+};
 
 function onNewSession(sessionId, outgoing, fingerprint, ip, name) {
     if (sessionsData.has(sessionId)) {
@@ -542,7 +542,7 @@ function onIsContact(sessionId, verified, fingerprint, name) {
 }
 function onMsgOrFileReceived(sessionId, outgoing, body) {
     if (currentSessionId == sessionId) {
-        dislayHistory();
+        displayHistory();
         if (!document.hidden && !outgoing) {
             socket.send("set_seen "+sessionId);
         }
@@ -631,14 +631,14 @@ function onAskLargeFiles(sessionId, encodedDownloadLocation, filesInfo) {
         if (currentSessionId == sessionId) {
             displayChatBottom();
         }
-    }
+    };
     buttonRow.appendChild(buttonDownload);
     let buttonRefuse = document.createElement("button");
     buttonRefuse.textContent = "Refuse";
     buttonRefuse.onclick = function() {
         removePopup();
         socket.send("abort "+sessionId);
-    }
+    };
     buttonRow.appendChild(buttonRefuse);
     mainDiv.appendChild(buttonRow);
     showPopup(mainDiv, false);
@@ -688,13 +688,13 @@ function onIncFilesTransfer(sessionId, chunkSize) {
 function onMsgLoad(sessionId, outgoing, msg) {
     msgHistory.get(sessionId).unshift([outgoing, false, msg]);
     if (currentSessionId == sessionId) {
-        dislayHistory(false);
+        displayHistory(false);
     }
 }
 function onFileLoad(sessionId, outgoing, uuid, fileName) {
     msgHistory.get(sessionId).unshift([outgoing, true, [uuid, fileName]]);
     if (currentSessionId == sessionId) {
-        dislayHistory(false);
+        displayHistory(false);
     }
 }
 function onDisconnected(sessionId) {
@@ -721,7 +721,7 @@ function onFileReceived(sessionId, uuid, file_name) {
 function onFileSent(sessionId, uuid, file_name) {
     msgHistory.get(sessionId).push([true, true, [uuid, file_name]]);
     if (currentSessionId == sessionId) {
-        dislayHistory();
+        displayHistory();
     }
 }
 function onNameSet(newName) {
@@ -763,7 +763,7 @@ function beautifyFingerprint(f) {
         f = f.slice(0, i)+" "+f.slice(i);
     }
     return f;
-};
+}
 function addSession(sessionId, name, outgoing, fingerprint, ip, isContact, isVerified, isOnline) {
     sessionsData.set(sessionId, {
         "name": name,
@@ -994,7 +994,7 @@ function displayChatBottom(speed = undefined) {
         }
     }
 }
-function dislayHistory(scrollToBottom = true) {
+function displayHistory(scrollToBottom = true) {
     msg_log.style.display = "block";
     msg_log.innerHTML = "";
     let previousOutgoing = undefined;
