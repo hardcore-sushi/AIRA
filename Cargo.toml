@@ -1,6 +1,6 @@
 [package]
 name = "aira"
-version = "0.0.1"
+version = "0.0.2"
 authors = ["Hardcore Sushi <hardcore.sushi@disroot.org>"]
 edition = "2018"
 

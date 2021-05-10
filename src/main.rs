@@ -543,8 +543,13 @@ async fn handle_index(req: HttpRequest) -> HttpResponse {
     let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
     if is_authenticated(&req) {
         let global_vars_read = global_vars.read().unwrap();
+        #[cfg(debug_assertions)]
+        let html = fs::read_to_string("src/frontend/index.html").unwrap();
+        #[cfg(not(debug_assertions))]
+        let html = include_str!("frontend/index.html");
         HttpResponse::Ok().body(
-            include_str!("frontend/index.html")
+            html
+                .replace("AIRA_VERSION", env!("CARGO_PKG_VERSION"))
                 .replace("IDENTITY_FINGERPRINT", &crypto::generate_fingerprint(&global_vars_read.session_manager.get_my_public_key()))
                 .replace("WEBSOCKET_PORT", &global_vars_read.websocket_port.to_string())
                 .replace("IS_IDENTITY_PROTECTED", &Identity::is_protected().unwrap().to_string())
@@ -621,7 +626,12 @@ fn handle_static(req: HttpRequest) -> HttpResponse {
                 if splits.len() == 3 {
                     match splits[2] {
                         "script.js" => return response_builder.content_type(JS_CONTENT_TYPE).body(include_str!("frontend/commons/script.js")),
-                        "style.css" => return response_builder.body(include_str!("frontend/commons/style.css")),
+                        "style.css" => {
+                            #[cfg(debug_assertions)]
+                            return response_builder.body(fs::read_to_string("src/frontend/commons/style.css").unwrap());
+                            #[cfg(not(debug_assertions))]
+                            return response_builder.body(include_str!("frontend/commons/style.css"));
+                        }
                         _ => {}
                     }
                 }

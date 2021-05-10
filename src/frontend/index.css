@@ -1,3 +1,6 @@
+:root {
+    --button-background: #52585C
+}
 body {
     margin: 0;
     height: 100%;
@@ -24,7 +27,7 @@ button {
     cursor: pointer;
 }
 button::after {
-    background-color: #52585C;
+    background-color: var(--button-background);
     border-radius: 100%;
     display: block;
     width: 20px;
@@ -43,7 +46,7 @@ input[type="file"] {
     cursor: pointer;
 }
 .file_picker::after {
-    content: url("/static/imgs/icons/attach/FF3C00");
+    content: url("/static/imgs/icons/attach/19a52c");
     width: 2em;
 }
 .popup {
@@ -102,7 +105,7 @@ input[type="file"] {
     margin: 10px;
 }
 .popup button {
-    background-color: #52585C;
+    background-color: var(--button-background);
     color: white;
     cursor: pointer;
     padding: 10px 20px;
@@ -120,7 +123,7 @@ input[type="file"] {
     font-size: 0.9em;
 }
 .popup h2.warning::before {
-    content: url("/static/imgs/icons/warning/FF3C00");
+    content: url("/static/imgs/icons/warning/19a52c");
     width: 9%;
     display: inline-block;
     vertical-align: middle;
@@ -208,7 +211,7 @@ input[type="file"] {
     background-color: #333940;
 }
 #left_panel ul li p::after {
-    content: url("/static/imgs/icons/warning/FF3C00");
+    content: url("/static/imgs/icons/warning/19a52c");
     display: inline-block;
     width: 1em;
     margin-left: 5px;
@@ -218,7 +221,7 @@ input[type="file"] {
     content: unset;
 }
 #left_panel ul li.is_verified p::after {
-    content: url("/static/imgs/icons/verified/FF3C00");
+    content: url("/static/imgs/icons/verified/19a52c");
 }
 #left_panel ul li .not_seen_marker {
     width: 12px;
@@ -226,11 +229,13 @@ input[type="file"] {
     background-color: var(--accent);
     border-radius: 12px;
 }
+#aira_version {
+    opacity: 0.5;
+    font-weight: bold;
+    margin: 8px;
+}
 #refresher button::after {
     content: url("/static/imgs/icons/refresh");  
-}
-#connect_box {
-    margin-bottom: 20px;
 }
 #refresher, #connect_box>div {
     position: relative;
@@ -250,7 +255,7 @@ input[type="file"] {
 }
 #show_local_ips:hover::after {
     background-color: unset;
-    content: url("/static/imgs/icons/info/FF3C00");
+    content: url("/static/imgs/icons/info/19a52c");
 }
 .popup ul {
     list-style-type: unset;
@@ -275,7 +280,7 @@ input[type="file"] {
     margin: 0;
 }
 #chat_header p::after {
-    content: url("/static/imgs/icons/warning/FF3C00");
+    content: url("/static/imgs/icons/warning/19a52c");
     display: inline-block;
     width: 1.2em;
     vertical-align: middle;
@@ -285,7 +290,7 @@ input[type="file"] {
     content: unset;
 }
 #chat_header.is_verified p::after {
-    content: url("/static/imgs/icons/verified/FF3C00");
+    content: url("/static/imgs/icons/verified/19a52c");
 }
 #chat_header.is_contact #delete_conversation::after {
     content: url("/static/imgs/icons/delete_conversation");
@@ -337,7 +342,7 @@ input[type="file"] {
 #file_cancel::after {
     background-color: unset;
     width: 20px;
-    content: url("/static/imgs/icons/cancel/FF3C00");
+    content: url("/static/imgs/icons/cancel/19a52c");
 }
 #file_progress {
     display: none;
@@ -411,7 +416,7 @@ input[type="file"] {
     color: var(--accent);
 }
 #msg_log .file a::after {
-    content: url("/static/imgs/icons/download/FF3C00");
+    content: url("/static/imgs/icons/download/19a52c");
     display: block;
     width: 2em;
     margin-left: 15px;
