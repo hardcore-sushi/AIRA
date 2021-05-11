@@ -63,6 +63,7 @@ document.getElementById("delete_conversation").onclick = function() {
     mainDiv.appendChild(p1);
     mainDiv.appendChild(p2);
     let button = document.createElement("button");
+    button.classList.add("classic_button");
     button.textContent = "Delete";
     button.onclick = function() {
         socket.send("delete_conversation "+currentSessionId);
@@ -89,6 +90,7 @@ document.getElementById("remove_contact").onclick = function() {
     p2.textContent = "Do you really want to remove this contact ?";
     mainDiv.appendChild(p2);
     let button = document.createElement("button");
+    button.classList.add("classic_button");
     button.textContent = "Delete";
     button.onclick = function() {
         socket.send("uncontact "+currentSessionId);
@@ -130,6 +132,7 @@ document.getElementById("verify").onclick = function() {
         let buttonRow = document.createElement("div");
         buttonRow.classList.add("button_row");
         let verifyButton = document.createElement("button");
+        verifyButton.classList.add("classic_button");
         verifyButton.textContent = "They match";
         verifyButton.onclick = function() {
             socket.send("verify "+currentSessionId);
@@ -140,6 +143,7 @@ document.getElementById("verify").onclick = function() {
         };
         buttonRow.appendChild(verifyButton);
         let cancelButton = document.createElement("button");
+        cancelButton.classList.add("classic_button");
         cancelButton.textContent = "They don't match";
         cancelButton.onclick = removePopup;
         buttonRow.appendChild(cancelButton);
@@ -157,6 +161,7 @@ document.getElementById("logout").onclick = function() {
     p_ask.textContent = "Do you really want to log out ?";
     mainDiv.appendChild(p_ask);
     let button = document.createElement("button");
+    button.classList.add("classic_button");
     button.textContent = "Log out";
     button.onclick = logout;
     mainDiv.appendChild(button);
@@ -243,6 +248,7 @@ profile_div.onclick = function() {
     inputName.value = identityName;
     sectionName.appendChild(inputName);
     let saveNameButton = document.createElement("button");
+    saveNameButton.classList.add("classic_button");;
     saveNameButton.textContent = "Save";
     saveNameButton.onclick = function() {
         socket.send("change_name "+document.getElementById("new_name").value);
@@ -272,6 +278,7 @@ profile_div.onclick = function() {
     errorMsg.style.color = "red";
     sectionPassword.appendChild(errorMsg);
     let changePasswordButton = document.createElement("button");
+    changePasswordButton.classList.add("classic_button");
     changePasswordButton.textContent = "Change password";
     changePasswordButton.onclick = function() {
         let inputs = document.querySelectorAll("input[type=\"password\"]");
@@ -314,6 +321,7 @@ profile_div.onclick = function() {
     p.style.color = "red";
     sectionDelete.appendChild(p);
     let deleteButton = document.createElement("button");
+    deleteButton.classList.add("classic_button");
     deleteButton.textContent = "Delete";
     deleteButton.style.backgroundColor = "red";
     deleteButton.onclick = function() {
@@ -323,6 +331,7 @@ profile_div.onclick = function() {
         p.textContent = "This action is irreversible. Are you sure you want to delete all your data ?";
         mainDiv.appendChild(p);
         let deleteButton = document.createElement("button");
+        deleteButton.classList.add("classic_button");
         deleteButton.style.backgroundColor = "red";
         deleteButton.textContent = "Delete";
         deleteButton.onclick = function() {
@@ -336,37 +345,7 @@ profile_div.onclick = function() {
     showPopup(mainDiv);
 };
 let chatHeader = document.getElementById("chat_header");
-chatHeader.children[0].onclick = function() {
-    let session = sessionsData.get(currentSessionId);
-    if (typeof session !== "undefined") {
-        let mainDiv = document.createElement("div");
-        mainDiv.classList.add("session_info");
-        mainDiv.appendChild(generateAvatar(session.name));
-        let h2 = document.createElement("h2");
-        h2.textContent = session.name;
-        mainDiv.appendChild(h2);
-        let pFingerprint = document.createElement("p");
-        pFingerprint.textContent = "Fingerprint:";
-        mainDiv.appendChild(pFingerprint);
-        let pre = document.createElement("pre");
-        pre.textContent = ' '+beautifyFingerprint(session.fingerprint);
-        mainDiv.appendChild(pre);
-        if (session.isOnline) {
-            let pIp = document.createElement("p");
-            pIp.textContent = "IP: "+session.ip;
-            mainDiv.appendChild(pIp);
-            let pConnection = document.createElement("p");
-            pConnection.textContent = "Connection: ";
-            if (session.outgoing) {
-                pConnection.textContent += "outgoing";
-            } else {
-                pConnection.textContent += "incomming";
-            }
-            mainDiv.appendChild(pConnection);
-        }
-        showPopup(mainDiv);
-    }
-};
+chatHeader.children[0].onclick = showSessionInfoPopup;
 document.querySelector("#refresher button").onclick = function() {
     socket.send("refresh");
 };
@@ -517,6 +496,10 @@ function onNameTold(sessionId, name) {
     sessionsData.get(sessionId).name = name;
     if (sessionId == currentSessionId) {
         displayHeader();
+        if (document.getElementById("session_info") !== null) {
+            removePopup();
+            showSessionInfoPopup();
+        }
     }
     displaySessions();
 }
@@ -609,6 +592,7 @@ function onAskLargeFiles(sessionId, encodedDownloadLocation, filesInfo) {
     let buttonRow = document.createElement("div");
     buttonRow.classList.add("button_row");
     let buttonDownload = document.createElement("button");
+    buttonDownload.classList.add("classic_button");
     buttonDownload.textContent = "Download";
     buttonDownload.onclick = function() {
         removePopup();
@@ -634,6 +618,7 @@ function onAskLargeFiles(sessionId, encodedDownloadLocation, filesInfo) {
     };
     buttonRow.appendChild(buttonDownload);
     let buttonRefuse = document.createElement("button");
+    buttonRefuse.classList.add("classic_button");
     buttonRefuse.textContent = "Refuse";
     buttonRefuse.onclick = function() {
         removePopup();
@@ -763,6 +748,47 @@ function beautifyFingerprint(f) {
         f = f.slice(0, i)+" "+f.slice(i);
     }
     return f;
+}
+function showSessionInfoPopup() {
+    let session = sessionsData.get(currentSessionId);
+    if (typeof session !== "undefined") {
+        let mainDiv = document.createElement("div");
+        mainDiv.id = "session_info";
+        mainDiv.appendChild(generateAvatar(session.name));
+        let nameDiv = document.createElement("div");
+        nameDiv.classList.add("name");
+        let h2 = document.createElement("h2");
+        h2.textContent = session.name;
+        nameDiv.appendChild(h2);
+        if (session.isOnline) {
+            let button = document.createElement("button");
+            button.onclick = function() {
+                socket.send("ask_name "+currentSessionId);
+            };
+            nameDiv.appendChild(button);
+        }
+        mainDiv.appendChild(nameDiv);
+        let pFingerprint = document.createElement("p");
+        pFingerprint.textContent = "Fingerprint:";
+        mainDiv.appendChild(pFingerprint);
+        let pre = document.createElement("pre");
+        pre.textContent = ' '+beautifyFingerprint(session.fingerprint);
+        mainDiv.appendChild(pre);
+        if (session.isOnline) {
+            let pIp = document.createElement("p");
+            pIp.textContent = "IP: "+session.ip;
+            mainDiv.appendChild(pIp);
+            let pConnection = document.createElement("p");
+            pConnection.textContent = "Connection: ";
+            if (session.outgoing) {
+                pConnection.textContent += "outgoing";
+            } else {
+                pConnection.textContent += "incomming";
+            }
+            mainDiv.appendChild(pConnection);
+        }
+        showPopup(mainDiv);
+    }
 }
 function addSession(sessionId, name, outgoing, fingerprint, ip, isContact, isVerified, isOnline) {
     sessionsData.set(sessionId, {

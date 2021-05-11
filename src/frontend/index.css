@@ -37,6 +37,17 @@ button::after {
 button:hover::after {
     background-color: var(--accent);
 }
+.classic_button {
+    background-color: var(--button-background);
+    color: white;
+    cursor: pointer;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-weight: bold;
+}
+.classic_button:hover {
+    background-color: var(--accent);
+}
 input[type="file"] {
     display: none;
 }
@@ -104,17 +115,6 @@ input[type="file"] {
     display: block;
     margin: 10px;
 }
-.popup button {
-    background-color: var(--button-background);
-    color: white;
-    cursor: pointer;
-    padding: 10px 20px;
-    border-radius: 8px;
-    font-weight: bold;
-}
-.popup button:hover {
-    background-color: var(--accent);
-}
 .popup span {
     font-weight: bold;
 }
@@ -128,13 +128,17 @@ input[type="file"] {
     display: inline-block;
     vertical-align: middle;
 }
-.popup .session_info h2 {
-    text-align: center;
+#session_info .name {
+    display: flex;
+    justify-content: center;
 }
-.popup .session_info p:first-of-type, .popup .session_info pre {
+#session_info .name button::after {
+    content: url("/static/imgs/icons/refresh");
+}
+#session_info p:first-of-type, #session_info pre {
     display: inline-block;
 }
-.popup .session_info p:nth-of-type(2) {
+#session_info p, #session_info pre {
     margin-top: 0;
 }
 .button_row {

@@ -230,6 +230,14 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                         Err(e) => print_error!(e)
                                     }
                                 }
+                                "ask_name" => {
+                                    let session_id: usize = args[1].parse().unwrap();
+                                    if let Err(e) = session_manager.send_command(&session_id, SessionCommand::Send {
+                                        buff: protocol::ask_name()
+                                    }).await {
+                                        print_error!(e);
+                                    }
+                                }
                                 "change_name" => {
                                     let new_name = &msg[args[0].len()+1..];
                                     match session_manager.change_name(new_name.to_string()).await {
