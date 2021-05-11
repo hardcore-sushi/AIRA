@@ -117,12 +117,13 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
         ui_connection.load_msgs(&msgs.0, &msgs.1);
     });
     let mut ips = Vec::new();
-    for interface in pnet_datalink::interfaces() {
-        if !interface.is_loopback() {
-            for ip in interface.ips {
-                ips.push(ip.ip());
+    match if_addrs::get_if_addrs() {
+        Ok(ifaces) => for iface in ifaces {
+            if !iface.is_loopback() {
+                ips.push(iface.ip());
             }
         }
+        Err(e) => print_error!(e)
     }
     ui_connection.set_local_ips(ips);
     discover_peers(session_manager.clone());

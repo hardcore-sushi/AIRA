@@ -1,12 +1,13 @@
 use std::{net::IpAddr, io};
+use tokio::runtime::Handle;
 use libmdns::{Responder, Service};
 use multicast_dns::discovery::{DiscoveryManager, DiscoveryListeners, ResolveListeners};
 use crate::{constants, print_error};
 
 const SERVICE_TYPE: &str = "_aira._tcp";
 
-pub fn advertise_me() -> io::Result<Service> {
-    Ok(Responder::new()?.register(
+pub async fn advertise_me() -> io::Result<Service> {
+    Ok(Responder::spawn(&Handle::current())?.register(
         SERVICE_TYPE.to_string(),
         "AIRA Node".to_string(),
         constants::PORT,

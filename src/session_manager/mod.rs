@@ -528,7 +528,7 @@ impl SessionManager {
         let server_v4 = TcpListener::bind(SocketAddr::new("0.0.0.0".parse().unwrap(), constants::PORT)).await?;
         let (sender, mut receiver) = mpsc::channel(1);
         *session_manager.listener_stop_signal.lock().unwrap() = Some(sender);
-        match discovery::advertise_me() {
+        match discovery::advertise_me().await {
             Ok(service) => *session_manager.mdns_service.lock().unwrap() = Some(service),
             Err(e) => {
                 print_error!("{}: you won't be discoverable by other peers.", e);

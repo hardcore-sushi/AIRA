@@ -33,7 +33,7 @@ uuid = {version = "0.8", features = ["v4"]}
 webbrowser = "0.5.5"
 libmdns = "0.6" #mDNS advertiser
 multicast_dns = "0.5" #mDNS browser
-pnet_datalink = "0.27.2"
+if-addrs = "0.6"
 base64 = "0.13.0"
 scrypt = "0.7.0"
 zeroize = "1.2.0"
