@@ -11,8 +11,7 @@ use uuid::Uuid;
 use platform_dirs::UserDirs;
 use crate::{constants, crypto, discovery, identity::{Contact, Identity}, print_error, utils::{get_unix_timestamp, get_not_used_path}};
 use crate::ui_interface::UiConnection;
-
-use self::session::SessionWrite;
+use self::session::{SessionWrite, PSECWriter};
 
 #[derive(Display, Debug, PartialEq, Eq)]
 pub enum SessionError {
@@ -67,7 +66,7 @@ pub struct SessionData {
 pub struct SessionManager {
     session_counter: RwLock<usize>,
     pub sessions: RwLock<HashMap<usize, SessionData>>,
-    identity: RwLock<Option<Identity>>,
+    pub identity: RwLock<Option<Identity>>,
     ui_connection: Mutex<Option<UiConnection>>,
     loaded_contacts: RwLock<HashMap<usize, Contact>>,
     pub last_loaded_msg_offsets: RwLock<HashMap<usize, usize>>,
@@ -87,6 +86,11 @@ impl SessionManager {
             }
             None => {}
         }
+    }
+
+    async fn encrypt_and_send<T: PSECWriter>(&self, writer: &mut T, buff: &[u8]) -> Result<(), SessionError> {
+        let use_padding = self.identity.read().unwrap().as_ref().unwrap().use_padding;
+        writer.encrypt_and_send(buff, use_padding).await
     }
 
     pub async fn connect_to(session_manager: Arc<SessionManager>, ip: IpAddr) -> io::Result<()> {
@@ -143,7 +147,7 @@ impl SessionManager {
     }
 
     async fn send_msg(&self, session_id: usize, session_write: &mut SessionWrite, buff: &[u8], is_sending: &mut bool, file_ack_sender: &mut Option<Sender<bool>>) -> Result<(), SessionError> {
-        session_write.encrypt_and_send(&buff).await?;
+        self.encrypt_and_send(session_write, &buff).await?;
         if buff[0] == protocol::Headers::ACCEPT_LARGE_FILES {
             self.sessions.write().unwrap().get_mut(&session_id).unwrap().files_download.as_mut().unwrap().accepted = true;
         } else if buff[0] == protocol::Headers::ABORT_FILES_TRANSFER {
@@ -187,7 +191,7 @@ impl SessionManager {
                                         self.identity.read().unwrap().as_ref().and_then(|identity| Some(identity.name.clone()))
                                     };
                                     if name.is_some() { //can be None if we log out just before locking the identity mutex
-                                        if let Err(e) = session_write.encrypt_and_send(&protocol::tell_name(&name.unwrap())).await {
+                                        if let Err(e) = self.encrypt_and_send(&mut session_write, &protocol::tell_name(&name.unwrap())).await {
                                             print_error!(e);
                                             break;
                                         }
@@ -235,7 +239,7 @@ impl SessionManager {
                                                 ui_connection.on_ask_large_files(&session_id, &files, download_location.to_str().unwrap());
                                             })
                                         }
-                                    } else if let Err(e) = session_write.encrypt_and_send(&[protocol::Headers::ABORT_FILES_TRANSFER]).await {
+                                    } else if let Err(e) = self.encrypt_and_send(&mut session_write, &[protocol::Headers::ABORT_FILES_TRANSFER]).await {
                                         print_error!(e);
                                         break;
                                     }
@@ -282,7 +286,7 @@ impl SessionManager {
                                                             local_file_handle = None;
                                                         }
                                                     }
-                                                    if let Err(e) = session_write.encrypt_and_send(&[protocol::Headers::ACK_CHUNK]).await {
+                                                    if let Err(e) = self.encrypt_and_send(&mut session_write, &[protocol::Headers::ACK_CHUNK]).await {
                                                         print_error!(e);
                                                         break;
                                                     }
@@ -297,7 +301,7 @@ impl SessionManager {
                                         if !is_success {
                                             self.sessions.write().unwrap().get_mut(&session_id).unwrap().files_download = None;
                                             local_file_handle = None;
-                                            if let Err(e) = session_write.encrypt_and_send(&[protocol::Headers::ABORT_FILES_TRANSFER]).await {
+                                            if let Err(e) = self.encrypt_and_send(&mut session_write, &[protocol::Headers::ABORT_FILES_TRANSFER]).await {
                                                 print_error!(e);
                                                 break;
                                             }
@@ -395,11 +399,11 @@ impl SessionManager {
                         }
                         SessionCommand::EncryptFileChunk { plain_text } => {
                             last_chunks_sizes.as_mut().unwrap().push(plain_text.len() as u32);
-                            next_chunk = Some(session_write.encrypt(&plain_text));
+                            next_chunk = Some(session_write.encrypt(&plain_text, self.identity.read().unwrap().as_ref().unwrap().use_padding));
                         }
                         SessionCommand::SendEncryptedFileChunk { ack_sender } => {
                             if let Some(chunk) = next_chunk.as_ref() {
-                                match session_write.socket_write(chunk).await {
+                                match session_write.send(chunk).await {
                                     Ok(_) => {
                                         file_ack_sender = Some(ack_sender);
                                         //once the pre-encrypted chunk is sent, we can send the pending messages
@@ -507,7 +511,7 @@ impl SessionManager {
                         ui_connection.on_new_session(&session_id, &ip.to_string(), outgoing, &crypto::generate_fingerprint(&peer_public_key), ip, None);
                     });
                     if !is_contact {
-                        match session.encrypt_and_send(&protocol::ask_name()).await {
+                        match session_manager.encrypt_and_send(&mut session, &protocol::ask_name()).await {
                             Ok(_) => {}
                             Err(e) => {
                                 print_error!(e);
@@ -621,10 +625,6 @@ impl SessionManager {
         self.loaded_contacts.read().unwrap().contains_key(session_id)
     }
 
-    pub fn load_file(&self, uuid: Uuid) -> Option<Vec<u8>> {
-        self.identity.read().unwrap().as_ref().unwrap().load_file(uuid)
-    }
-
     pub fn store_file(&self, session_id: &usize, data: &[u8]) -> Result<Uuid, rusqlite::Error> {
         self.identity.read().unwrap().as_ref().unwrap().store_file(match self.loaded_contacts.read().unwrap().get(session_id) {
             Some(contact) => Some(contact.uuid),
@@ -639,14 +639,6 @@ impl SessionManager {
             *offsets.get_mut(session_id).unwrap() += msgs.as_ref().unwrap().len();
         }
         msgs
-    }
-
-    pub fn get_my_public_key(&self) -> [u8; PUBLIC_KEY_LENGTH] {
-        self.identity.read().unwrap().as_ref().unwrap().get_public_key()
-    }
-
-    pub fn get_my_name(&self) -> String {
-        self.identity.read().unwrap().as_ref().unwrap().name.clone()
     }
 
     #[allow(unused_must_use)]

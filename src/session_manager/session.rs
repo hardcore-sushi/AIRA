@@ -1,5 +1,6 @@
 use std::{convert::TryInto, io::ErrorKind, net::IpAddr};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpStream, tcp::{OwnedReadHalf, OwnedWriteHalf}}};
+use async_trait::async_trait;
 use ed25519_dalek;
 use ed25519_dalek::{ed25519::signature::Signature, Verifier, PUBLIC_KEY_LENGTH, SIGNATURE_LENGTH};
 use x25519_dalek;
@@ -16,7 +17,7 @@ const RANDOM_LEN: usize = 64;
 const MESSAGE_LEN_LEN: usize = 4;
 type MessageLenType = u32;
 
-async fn socket_read<T: AsyncReadExt + Unpin>(reader: &mut T, buff: &mut [u8]) -> Result<usize, SessionError> {
+async fn receive<T: AsyncReadExt + Unpin>(reader: &mut T, buff: &mut [u8]) -> Result<usize, SessionError> {
     match reader.read(buff).await {
         Ok(read) => {
             if read > 0 {
@@ -37,7 +38,7 @@ async fn socket_read<T: AsyncReadExt + Unpin>(reader: &mut T, buff: &mut [u8]) -
     }
 }
 
-async fn socket_write<T: AsyncWriteExt + Unpin>(writer: &mut T, buff: &[u8]) -> Result<(), SessionError> {
+async fn send<T: AsyncWriteExt + Unpin>(writer: &mut T, buff: &[u8]) -> Result<(), SessionError> {
     match writer.write_all(buff).await {
         Ok(_) => Ok(()),
         Err(e) => Err(match e.kind() {
@@ -51,18 +52,22 @@ async fn socket_write<T: AsyncWriteExt + Unpin>(writer: &mut T, buff: &[u8]) -> 
     }
 }
 
-fn pad(plain_text: &[u8]) -> Vec<u8> {
+fn pad(plain_text: &[u8], use_padding: bool) -> Vec<u8> {
     let encoded_msg_len = (plain_text.len() as MessageLenType).to_be_bytes();
     let msg_len = plain_text.len()+encoded_msg_len.len();
-    let mut len = 1000;
-    while len < msg_len {
-        len *= 2;
-    }
     let mut output = Vec::from(encoded_msg_len);
-    output.reserve(len);
-    output.extend(plain_text);
-    output.resize(len, 0);
-    OsRng.fill_bytes(&mut output[msg_len..]);
+    if use_padding {
+        let mut len = 1000;
+        while len < msg_len {
+            len *= 2;
+        }
+        output.reserve(len);
+        output.extend(plain_text);
+        output.resize(len, 0);
+        OsRng.fill_bytes(&mut output[msg_len..]);
+    } else {
+        output.extend(plain_text);
+    }
     output
 }
 
@@ -71,8 +76,8 @@ fn unpad(input: Vec<u8>) -> Vec<u8> {
     Vec::from(&input[MESSAGE_LEN_LEN..MESSAGE_LEN_LEN+msg_len])
 }
 
-fn encrypt(local_cipher: &Aes128Gcm, local_iv: &[u8], local_counter: &mut usize, plain_text: &[u8]) -> Vec<u8> {
-    let padded_msg = pad(plain_text);
+fn encrypt(local_cipher: &Aes128Gcm, local_iv: &[u8], local_counter: &mut usize, plain_text: &[u8], use_padding: bool) -> Vec<u8> {
+    let padded_msg = pad(plain_text, use_padding);
     let cipher_len = (padded_msg.len() as MessageLenType).to_be_bytes();
     let payload = Payload {
         msg: &padded_msg,
@@ -83,9 +88,16 @@ fn encrypt(local_cipher: &Aes128Gcm, local_iv: &[u8], local_counter: &mut usize,
     [&cipher_len, cipher_text.as_slice()].concat()
 }
 
-pub async fn encrypt_and_send<T: AsyncWriteExt + Unpin>(writer: &mut T, local_cipher: &Aes128Gcm, local_iv: &[u8], local_counter: &mut usize, plain_text: &[u8]) -> Result<(), SessionError> {
-    let cipher_text = encrypt(local_cipher, local_iv, local_counter, plain_text);
-    socket_write(writer, &cipher_text).await
+pub async fn encrypt_and_send<T: AsyncWriteExt + Unpin>(writer: &mut T, local_cipher: &Aes128Gcm, local_iv: &[u8], local_counter: &mut usize, plain_text: &[u8], use_padding: bool) -> Result<(), SessionError> {
+    let cipher_text = encrypt(local_cipher, local_iv, local_counter, plain_text, use_padding);
+    send(writer, &cipher_text).await
+}
+
+#[async_trait]
+pub trait PSECWriter {
+    async fn encrypt_and_send(&mut self, plain_text: &[u8], use_padding: bool) -> Result<(), SessionError>;
+    fn encrypt(&mut self, plain_text: &[u8], use_padding: bool) -> Vec<u8>;
+    async fn send(&mut self, cipher_text: &[u8]) -> Result<(), SessionError>;
 }
 
 pub struct SessionRead {
@@ -96,19 +108,19 @@ pub struct SessionRead {
 }
 
 impl SessionRead {
-    async fn socket_read(&mut self, buff: &mut [u8]) -> Result<usize, SessionError> {
-        socket_read(&mut self.read_half, buff).await
+    async fn receive(&mut self, buff: &mut [u8]) -> Result<usize, SessionError> {
+        receive(&mut self.read_half, buff).await
     }
 
     pub async fn receive_and_decrypt(mut self) -> Result<(SessionRead, Vec<u8>), SessionError> {
         let mut message_len = [0; MESSAGE_LEN_LEN];
-        self.socket_read(&mut message_len).await?;
+        self.receive(&mut message_len).await?;
         let recv_len = MessageLenType::from_be_bytes(message_len) as usize + AES_TAG_LEN;
         if recv_len <= Session::MAX_RECV_SIZE {
             let mut cipher_text = vec![0; recv_len];
             let mut read = 0;
             while read < recv_len {
-                read += self.socket_read(&mut cipher_text[read..]).await?;
+                read += self.receive(&mut cipher_text[read..]).await?;
             }
             let peer_nonce = iv_to_nonce(&self.peer_iv, &mut self.peer_counter);
             let payload = Payload {
@@ -133,15 +145,16 @@ pub struct SessionWrite {
     local_counter: usize,
 }
 
-impl SessionWrite {
-    pub async fn encrypt_and_send(&mut self, plain_text: &[u8]) -> Result<(), SessionError> {
-        encrypt_and_send(&mut self.write_half, &self.local_cipher, &self.local_iv, &mut self.local_counter, plain_text).await
+#[async_trait]
+impl PSECWriter for SessionWrite {
+    async fn encrypt_and_send(&mut self, plain_text: &[u8], use_padding: bool) -> Result<(), SessionError> {
+        encrypt_and_send(&mut self.write_half, &self.local_cipher, &self.local_iv, &mut self.local_counter, plain_text, use_padding).await
     }
-    pub fn encrypt(&mut self, plain_text: &[u8]) -> Vec<u8> {
-        encrypt(&self.local_cipher, &self.local_iv, &mut self.local_counter, plain_text)
+    fn encrypt(&mut self, plain_text: &[u8], use_padding: bool) -> Vec<u8> {
+        encrypt(&self.local_cipher, &self.local_iv, &mut self.local_counter, plain_text, use_padding)
     }
-    pub async fn socket_write(&mut self, cipher_text: &[u8]) -> Result<(), SessionError> {
-        socket_write(&mut self.write_half, cipher_text).await
+    async fn send(&mut self, cipher_text: &[u8]) -> Result<(), SessionError> {
+        send(&mut self.write_half, cipher_text).await
     }
 }
 
@@ -199,22 +212,22 @@ impl Session {
         self.stream.peer_addr().unwrap().ip()
     }
 
-    async fn socket_read(&mut self, buff: &mut [u8]) -> Result<usize, SessionError> {
-        socket_read(&mut self.stream, buff).await
+    async fn receive(&mut self, buff: &mut [u8]) -> Result<usize, SessionError> {
+        receive(&mut self.stream, buff).await
     }
 
-    pub async fn socket_write(&mut self, buff: &[u8]) -> Result<(), SessionError> {
-        socket_write(&mut self.stream, buff).await
+    pub async fn send(&mut self, buff: &[u8]) -> Result<(), SessionError> {
+        send(&mut self.stream, buff).await
     }
 
     async fn handshake_read(&mut self, buff: &mut [u8]) -> Result<(), SessionError> {
-        self.socket_read(buff).await?;
+        self.receive(buff).await?;
         self.handshake_recv_buff.extend(buff.as_ref());
         Ok(())
     }
 
     async fn handshake_write(&mut self, buff: &[u8]) -> Result<(), SessionError> {
-        self.socket_write(buff).await?;
+        self.send(buff).await?;
         self.handshake_sent_buff.extend(buff);
         Ok(())
     }
@@ -298,9 +311,9 @@ impl Session {
                     let handshake_hash = self.hash_handshake(i_am_bob);
                     //sending handshake finished
                     let handshake_finished = compute_handshake_finished(handshake_keys.local_handshake_traffic_secret, handshake_hash);
-                    self.socket_write(&handshake_finished).await?;
+                    self.send(&handshake_finished).await?;
                     let mut peer_handshake_finished = [0; HASH_OUTPUT_LEN];
-                    self.socket_read(&mut peer_handshake_finished).await?;
+                    self.receive(&mut peer_handshake_finished).await?;
                     if verify_handshake_finished(peer_handshake_finished, handshake_keys.peer_handshake_traffic_secret, handshake_hash) {
                         //calc application keys
                         let application_keys = ApplicationKeys::derive_keys(handshake_keys.handshake_secret, handshake_hash, i_am_bob);
@@ -313,8 +326,19 @@ impl Session {
         }
         Err(SessionError::TransmissionCorrupted)
     }
-    
-    pub async fn encrypt_and_send(&mut self, plain_text: &[u8]) -> Result<(), SessionError> {
-        encrypt_and_send(&mut self.stream, self.local_cipher.as_ref().unwrap(), self.local_iv.as_ref().unwrap(), &mut self.local_counter, plain_text).await
+}
+
+#[async_trait]
+impl PSECWriter for Session {
+    async fn encrypt_and_send(&mut self, plain_text: &[u8], use_padding: bool) -> Result<(), SessionError> {
+        encrypt_and_send(&mut self.stream, self.local_cipher.as_ref().unwrap(), self.local_iv.as_ref().unwrap(), &mut self.local_counter, plain_text, use_padding).await
+    }
+
+    fn encrypt(&mut self, plain_text: &[u8], use_padding: bool) -> Vec<u8> {
+        encrypt(self.local_cipher.as_ref().unwrap(), &self.local_iv.unwrap(), &mut self.local_counter, plain_text, use_padding)
+    }
+
+    async fn send(&mut self, cipher_text: &[u8]) -> Result<(), SessionError> {
+        send(&mut self.stream, cipher_text).await
     }
 }

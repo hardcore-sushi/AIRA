@@ -91,7 +91,7 @@ fn load_msgs(session_manager: Arc<SessionManager>, ui_connection: &mut UiConnect
 
 async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLock<GlobalVars>>, worker_done: Arc<RwLock<bool>>) {
     let session_manager = global_vars.read().unwrap().session_manager.clone();
-    ui_connection.set_name(&session_manager.get_my_name());
+    ui_connection.set_name(&session_manager.identity.read().unwrap().as_ref().unwrap().name);
     session_manager.list_contacts().into_iter().for_each(|contact|{
         ui_connection.set_as_contact(contact.0, &contact.1, contact.2, &crypto::generate_fingerprint(&contact.3));
         session_manager.last_loaded_msg_offsets.write().unwrap().insert(contact.0, 0);
@@ -238,6 +238,12 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                         print_error!(e);
                                     }
                                 }
+                                "set_use_padding" => {
+                                    let use_padding: bool = args[1].parse().unwrap();
+                                    if let Err(e) = session_manager.identity.write().unwrap().as_mut().unwrap().set_use_padding(use_padding) {
+                                        print_error!(e);
+                                    }
+                                }
                                 "change_name" => {
                                     let new_name = &msg[args[0].len()+1..];
                                     match session_manager.change_name(new_name.to_string()).await {
@@ -316,7 +322,7 @@ fn handle_load_file(req: HttpRequest, file_info: web::Query<FileInfo>) -> HttpRe
         match Uuid::from_str(&file_info.uuid) {
             Ok(uuid) => {
                 let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
-                match global_vars.read().unwrap().session_manager.load_file(uuid) {
+                match global_vars.read().unwrap().session_manager.identity.read().unwrap().as_ref().unwrap().load_file(uuid) {
                     Some(buffer) => {
                         return HttpResponse::Ok().header("Content-Disposition", format!("attachment; filename=\"{}\"", escape_double_quote(html_escape::decode_html_entities(&file_info.file_name).to_string()))).content_type("application/octet-stream").body(buffer);
                     }
@@ -560,12 +566,15 @@ async fn handle_index(req: HttpRequest) -> HttpResponse {
         let html = fs::read_to_string("src/frontend/index.html").unwrap();
         #[cfg(not(debug_assertions))]
         let html = include_str!(concat!(env!("OUT_DIR"), "/index.html"));
+        let public_key = global_vars_read.session_manager.identity.read().unwrap().as_ref().unwrap().get_public_key();
+        let use_padding = global_vars_read.session_manager.identity.read().unwrap().as_ref().unwrap().use_padding.to_string();
         HttpResponse::Ok().body(
             html
                 .replace("AIRA_VERSION", env!("CARGO_PKG_VERSION"))
-                .replace("IDENTITY_FINGERPRINT", &crypto::generate_fingerprint(&global_vars_read.session_manager.get_my_public_key()))
+                .replace("IDENTITY_FINGERPRINT", &crypto::generate_fingerprint(&public_key))
                 .replace("WEBSOCKET_PORT", &global_vars_read.websocket_port.to_string())
                 .replace("IS_IDENTITY_PROTECTED", &Identity::is_protected().unwrap().to_string())
+                .replace("PSEC_PADDING", &use_padding)
         )
     } else {
         index_not_logged_in(global_vars)

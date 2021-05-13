@@ -241,7 +241,9 @@ profile_div.onclick = function() {
     fingerprint.textContent = beautifyFingerprint(identityFingerprint);
     mainDiv.appendChild(fingerprint);
     let sectionName = document.createElement("section");
-    sectionName.textContent = "Name:";
+    let titleName = document.createElement("h3");
+    titleName.textContent = "Name:";
+    sectionName.appendChild(titleName);
     let inputName = document.createElement("input");
     inputName.id = "new_name";
     inputName.type = "text";
@@ -255,10 +257,16 @@ profile_div.onclick = function() {
     };
     sectionName.appendChild(saveNameButton);
     mainDiv.appendChild(sectionName);
+    let sectionPadding = document.createElement("section");
+    sectionPadding.appendChild(generateSwitchPreference("Use PSEC padding", "PSEC padding obfuscates the length of your messages but uses more network bandwidth.", usePadding, function(checked) {
+        socket.send("set_use_padding "+checked);
+        usePadding = checked;
+    }));
+    mainDiv.appendChild(sectionPadding);
     let sectionPassword = document.createElement("section");
-    sectionPassword.textContent = "Change your password:";
-    sectionPassword.style.paddingTop = "1em";
-    sectionPassword.style.borderTop = "1px solid black";
+    let titlePassword = document.createElement("h3");
+    titlePassword.textContent = "Change your password:";
+    sectionPassword.appendChild(titlePassword);
     if (isIdentityProtected) {
         let input_old_password = document.createElement("input");
         input_old_password.type = "password";
@@ -313,8 +321,9 @@ profile_div.onclick = function() {
     sectionPassword.appendChild(changePasswordButton);
     mainDiv.appendChild(sectionPassword);
     let sectionDelete = document.createElement("section");
-    sectionDelete.textContent = "Delete identity:";
-    sectionDelete.style.paddingTop = "1em";
+    let deleteTitle = document.createElement("h3");
+    deleteTitle.textContent = "Delete identity:";
+    sectionDelete.appendChild(deleteTitle);
     sectionDelete.style.borderTop = "1px solid red";
     let p = document.createElement("p");
     p.textContent = "Deleting your identity will delete all your conversations (messages and files), all your contacts, and your private key. You won't be able to be recognized by your contacts anymore.";
@@ -878,6 +887,32 @@ function generatePopupWarningTitle() {
     h2.classList.add("warning");
     h2.textContent = "Warning!";
     return h2;
+}
+function generateSwitchPreference(title, summary, checked, onSwitch) {
+    let label = document.createElement("label");
+    label.classList.add("switch_preference");
+    let divDesc = document.createElement("div");
+    divDesc.classList.add("preference_description");
+    let h3 = document.createElement("h3");
+    h3.textContent = title;
+    divDesc.appendChild(h3);
+    let pSummary = document.createElement("p");
+    pSummary.textContent = summary;
+    divDesc.appendChild(pSummary);
+    label.appendChild(divDesc);
+    let switchDiv = document.createElement("div");
+    switchDiv.classList.add("switch");
+    let input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = checked;
+    input.onchange = function() {
+        onSwitch(input.checked);
+    };
+    switchDiv.appendChild(input);
+    let span = document.createElement("span");
+    switchDiv.appendChild(span);
+    label.appendChild(switchDiv);
+    return label;
 }
 function generateName(name) {
     let p = document.createElement("p");
