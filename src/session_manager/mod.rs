@@ -102,10 +102,11 @@ impl SessionManager {
     pub fn store_msg(&self, session_id: &usize, outgoing: bool, buffer: Vec<u8>) {
         let mut msg_saved = false;
         if self.is_contact(session_id) {
+            let mut offsets = self.last_loaded_msg_offsets.write().unwrap(); //locking mutex before modifying the DB to prevent race conditions
             match self.identity.read().unwrap().as_ref().unwrap().store_msg(&self.loaded_contacts.read().unwrap().get(session_id).unwrap().uuid, outgoing, &buffer) {
                 Ok(_) => {
+                    *offsets.get_mut(session_id).unwrap() += 1;
                     msg_saved = true;
-                    *self.last_loaded_msg_offsets.write().unwrap().get_mut(session_id).unwrap() += 1;
                 },
                 Err(e) => print_error!(e),
             }
@@ -634,9 +635,13 @@ impl SessionManager {
 
     pub fn load_msgs(&self, session_id: &usize, count: usize) -> Option<Vec<(bool, Vec<u8>)>> {
         let mut offsets = self.last_loaded_msg_offsets.write().unwrap();
-        let msgs = self.identity.read().unwrap().as_ref().unwrap().load_msgs(&self.loaded_contacts.read().unwrap().get(session_id).unwrap().uuid, *offsets.get(session_id).unwrap(), count);
-        if msgs.is_some() {
-            *offsets.get_mut(session_id).unwrap() += msgs.as_ref().unwrap().len();
+        let msgs = self.identity.read().unwrap().as_ref().unwrap().load_msgs(
+            &self.loaded_contacts.read().unwrap().get(session_id).unwrap().uuid,
+            *offsets.get(session_id).unwrap(),
+            count
+        );
+        if let Some(msgs) = msgs.as_ref() {
+            *offsets.get_mut(session_id).unwrap() += msgs.len();
         }
         msgs
     }

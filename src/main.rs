@@ -114,7 +114,9 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
         }
     }
     session_manager.get_saved_msgs().into_iter().for_each(|msgs| {
-        ui_connection.load_msgs(&msgs.0, &msgs.1);
+        if msgs.1.len() > 0 {
+            ui_connection.load_msgs(&msgs.0, &msgs.1);
+        }
     });
     let mut ips = Vec::new();
     match if_addrs::get_if_addrs() {

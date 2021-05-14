@@ -454,11 +454,8 @@ socket.onmessage = function(msg) {
             case "inc_file_transfer":
                 onIncFilesTransfer(args[1], parseInt(args[2]));
                 break;
-            case "load_sent_msg":
-                onMsgLoad(args[1], args[2] === "true", msg.data.slice(args[0].length+args[1].length+args[2].length+3));
-                break;
-            case "load_sent_file":
-                onFileLoad(args[1], args[2] === "true", args[3], msg.data.slice(args[0].length+args[1].length+args[2].length+args[3].length+4));
+            case "load_msgs":
+                onMsgsLoad(args[1], msg.data.slice(args[0].length+args[1].length+2));
                 break;
             case "name_told":
                 onNameTold(args[1], msg.data.slice(args[0].length+args[1].length+2));
@@ -512,15 +509,15 @@ function onNameTold(sessionId, name) {
     }
     displaySessions();
 }
-function setNotSeen(str_sessionIds) {
-    let sessionIds = str_sessionIds.split(' ');
+function setNotSeen(strSessionIds) {
+    let sessionIds = strSessionIds.split(' ');
     for (let i=0; i<sessionIds.length; ++i) {
         sessionsData.get(sessionIds[i]).seen = false;
     }
     displaySessions();
 }
-function setLocalIps(str_ips) {
-    localIps = str_ips.split(' ');
+function setLocalIps(strIPs) {
+    localIps = strIPs.split(' ');
 }
 function onIsContact(sessionId, verified, fingerprint, name) {
     if (sessionsData.has(sessionId)) {
@@ -679,16 +676,32 @@ function onIncFilesTransfer(sessionId, chunkSize) {
         }
     }
 }
-function onMsgLoad(sessionId, outgoing, msg) {
-    msgHistory.get(sessionId).unshift([outgoing, false, msg]);
-    if (currentSessionId == sessionId) {
-        displayHistory(false);
+function onMsgsLoad(sessionId, strMsgs) {
+    let msgs = strMsgs.split(' ');
+    let n = 0;
+    while (n < msgs.length) {
+        let outgoing = msgs[n+1] === "true";
+        switch (msgs[n]) {
+            case 'm':
+                let msg = b64DecodeUnicode(msgs[n+2]);
+                msgHistory.get(sessionId).unshift([outgoing, false, msg]);
+                n += 3;
+                break;
+            case 'f':
+                let uuid = msgs[n+2];
+                let fileName = b64DecodeUnicode(msgs[n+3]);
+                msgHistory.get(sessionId).unshift([outgoing, true, [uuid, fileName]]);
+                n += 4;
+        }
     }
-}
-function onFileLoad(sessionId, outgoing, uuid, fileName) {
-    msgHistory.get(sessionId).unshift([outgoing, true, [uuid, fileName]]);
     if (currentSessionId == sessionId) {
-        displayHistory(false);
+        if (msg_log.scrollHeight - msg_log.scrollTop === msg_log.clientHeight) {
+            displayHistory();
+        } else {
+            let backupHeight = msg_log.scrollHeight;
+            displayHistory(false);
+            msg_log.scrollTop = msg_log.scrollHeight-backupHeight;
+        }
     }
 }
 function onDisconnected(sessionId) {
@@ -1077,5 +1090,8 @@ function displayHistory(scrollToBottom = true) {
     });
     if (scrollToBottom) {
         msg_log.scrollTop = msg_log.scrollHeight;
+    }
+    if (msg_log.scrollHeight <= msg_log.clientHeight) {
+        socket.send("load_msgs "+currentSessionId);
     }
 }
