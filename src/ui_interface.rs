@@ -6,7 +6,7 @@ mod ui_messages {
     use std::{fmt::Display, iter::FromIterator, net::IpAddr, str::from_utf8};
     use tungstenite::Message;
     use uuid::Uuid;
-    use crate::{print_error, session_manager::{LargeFileDownload, LargeFilesDownload, protocol}, utils::to_uuid_bytes};
+    use crate::{print_error, session_manager::{LargeFileDownload, LargeFilesDownload}, protocol, utils::to_uuid_bytes};
 
     fn simple_event(command: &str, session_id: &usize) -> Message {
         Message::from(format!("{} {}", command, session_id))

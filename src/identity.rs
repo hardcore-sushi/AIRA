@@ -1,6 +1,6 @@
 use std::convert::TryInto;
 use crypto::CryptoError;
-use ed25519_dalek::{Keypair, Signer, SIGNATURE_LENGTH, PUBLIC_KEY_LENGTH};
+use ed25519_dalek::{Keypair, PUBLIC_KEY_LENGTH};
 use rusqlite::{Connection, params};
 use platform_dirs::AppDirs;
 use utils::to_uuid_bytes;
@@ -59,16 +59,12 @@ pub struct Contact {
 
 pub struct Identity {
     pub name: String,
-    keypair: Keypair,
+    pub keypair: Keypair,
     pub master_key: [u8; crypto::MASTER_KEY_LEN],
     pub use_padding: bool,
 }
 
 impl Identity {
-
-    pub fn sign(&self, input: &[u8]) -> [u8; SIGNATURE_LENGTH] {
-        self.keypair.sign(input).to_bytes()
-    }
     
     pub fn get_public_key(&self) -> [u8; PUBLIC_KEY_LENGTH] {
         self.keypair.public.to_bytes()

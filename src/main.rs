@@ -2,6 +2,7 @@ mod key_value_table;
 mod identity;
 mod crypto;
 mod session_manager;
+mod protocol;
 mod utils;
 mod ui_interface;
 mod constants;
@@ -13,14 +14,14 @@ use actix_web::{App, HttpMessage, HttpRequest, HttpResponse, HttpServer, http::{
 use actix_multipart::Multipart;
 use tungstenite::Message;
 use futures::{StreamExt, TryStreamExt};
-use rand_8::{RngCore, rngs::OsRng};
+use rand::{RngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use platform_dirs::AppDirs;
 use zeroize::Zeroize;
 use utils::escape_double_quote;
 use identity::Identity;
-use session_manager::{SessionManager, SessionCommand, protocol};
+use session_manager::{SessionManager, SessionCommand};
 use ui_interface::UiConnection;
 
 async fn start_websocket_server(global_vars: Arc<RwLock<GlobalVars>>) -> u16 {
@@ -159,11 +160,10 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                 "send" => {
                                     let session_id: usize = args[1].parse().unwrap();
                                     let buffer = protocol::new_message(msg[args[0].len()+args[1].len()+2..].to_string());
-                                    match session_manager.send_command(&session_id, SessionCommand::Send {
+                                    if session_manager.send_command(&session_id, SessionCommand::Send {
                                         buff: buffer.clone()
                                     }).await {
-                                        Ok(_) => session_manager.store_msg(&session_id, true, buffer),
-                                        Err(e) => print_error!(e)
+                                        session_manager.store_msg(&session_id, true, buffer);
                                     }
                                 }
                                 "large_files" => {
@@ -172,33 +172,25 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                     for n in (2..args.len()).step_by(2) {
                                         file_info.push((args[n].parse::<u64>().unwrap(), base64::decode(args[n+1]).unwrap()));
                                     }
-                                    if let Err(e) = session_manager.send_command(&session_id, SessionCommand::Send {
+                                    session_manager.send_command(&session_id, SessionCommand::Send {
                                         buff: protocol::ask_large_files(file_info)
-                                    }).await {
-                                        print_error!(e);
-                                    }
+                                    }).await;
                                 }
                                 "download" => {
                                     let session_id: usize = args[1].parse().unwrap();
-                                    if let Err(e) = session_manager.send_command(&session_id, SessionCommand::Send {
+                                    session_manager.send_command(&session_id, SessionCommand::Send {
                                         buff: vec![protocol::Headers::ACCEPT_LARGE_FILES]
-                                    }).await {
-                                        print_error!(e);
-                                    }
+                                    }).await;
                                 }
                                 "abort" => {
                                     let session_id: usize = args[1].parse().unwrap();
-                                    if let Err(e) = session_manager.send_command(&session_id, SessionCommand::Send {
+                                    session_manager.send_command(&session_id, SessionCommand::Send {
                                         buff: vec![protocol::Headers::ABORT_FILES_TRANSFER]
-                                    }).await {
-                                        print_error!(e);
-                                    }
+                                    }).await;
                                 }
                                 "sending_ended" => {
                                     let session_id: usize = args[1].parse().unwrap();
-                                    if let Err(e) = session_manager.send_command(&session_id, SessionCommand::SendingEnded).await {
-                                        print_error!(e);
-                                    }
+                                    session_manager.send_command(&session_id, SessionCommand::SendingEnded).await;
                                 }
                                 "load_msgs" => {
                                     let session_id: usize = args[1].parse().unwrap();
@@ -234,11 +226,9 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                 }
                                 "ask_name" => {
                                     let session_id: usize = args[1].parse().unwrap();
-                                    if let Err(e) = session_manager.send_command(&session_id, SessionCommand::Send {
+                                    session_manager.send_command(&session_id, SessionCommand::Send {
                                         buff: protocol::ask_name()
-                                    }).await {
-                                        print_error!(e);
-                                    }
+                                    }).await;
                                 }
                                 "set_use_padding" => {
                                     let use_padding: bool = args[1].parse().unwrap();
@@ -357,20 +347,17 @@ async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpRespo
                         while let Some(Ok(chunk)) = field.next().await {
                             buffer.extend(chunk);
                         }
-                        match global_vars_read.session_manager.send_command(&session_id,  SessionCommand::Send {
+                        if global_vars_read.session_manager.send_command(&session_id,  SessionCommand::Send {
                             buff: protocol::file(filename, &buffer)
                         }).await {
-                            Ok(_) => {
-                                match global_vars_read.session_manager.store_file(&session_id, &buffer) {
-                                    Ok(file_uuid) => {
-                                        let msg = [&[protocol::Headers::FILE][..], file_uuid.as_bytes(), filename.as_bytes()].concat();
-                                        global_vars_read.session_manager.store_msg(&session_id, true, msg);
-                                        return HttpResponse::Ok().body(file_uuid.to_string());
-                                    }
-                                    Err(e) => print_error!(e)
+                            match global_vars_read.session_manager.store_file(&session_id, &buffer) {
+                                Ok(file_uuid) => {
+                                    let msg = [&[protocol::Headers::FILE][..], file_uuid.as_bytes(), filename.as_bytes()].concat();
+                                    global_vars_read.session_manager.store_msg(&session_id, true, msg);
+                                    return HttpResponse::Ok().body(file_uuid.to_string());
                                 }
+                                Err(e) => print_error!(e)
                             }
-                            Err(e) => print_error!(e)
                         }
                     } else {
                         let (ack_sender, mut ack_receiver) = mpsc::channel(1);
@@ -394,22 +381,20 @@ async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpRespo
                                     break;
                                 }
                             }
-                            if let Err(e) = global_vars_read.session_manager.send_command(&session_id, SessionCommand::EncryptFileChunk{
+                            if !global_vars_read.session_manager.send_command(&session_id, SessionCommand::EncryptFileChunk{
                                 plain_text: chunk_buffer.clone()
                             }).await {
-                                print_error!(e);
                                 return HttpResponse::InternalServerError().finish();
                             }
                             if !match ack_receiver.recv().await {
                                 Some(should_continue) => {
                                     //send previous encrypted chunk even if transfert is aborted to keep PSEC nonces syncrhonized
-                                    if let Err(e) = global_vars_read.session_manager.send_command(&session_id, SessionCommand::SendEncryptedFileChunk {
+                                    if global_vars_read.session_manager.send_command(&session_id, SessionCommand::SendEncryptedFileChunk {
                                         ack_sender: ack_sender.clone()
                                     }).await {
-                                        print_error!(e);
-                                        false
-                                    } else {
                                         should_continue
+                                    } else {
+                                        false
                                     }
                                 }
                                 None => false

@@ -5,39 +5,36 @@ authors = ["Hardcore Sushi <hardcore.sushi@disroot.org>"]
 edition = "2018"
 
 [dependencies]
-rand-8 = {package = "rand", version = "0.8.3"}
-rand-7 = {package = "rand", version = "0.7.3"}
-tokio = {version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "io-util"]}
-async-trait = "0.1.5"
+rand = "0.8"
+rand-7 = { package = "rand", version = "0.7.3" }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "io-util"] }
+async-psec = { version = "0.1", git = "https://forge.chapril.org/hardcoresushi/async-psec", features = ["split"] }
 lazy_static = "1.4"
-socket2 = "0.4.0"
-rusqlite = {version = "0.25.1", features = ["bundled"]}
+socket2 = "0.4"
+rusqlite = { version = "0.25.1", features = ["bundled"] }
 ed25519-dalek = "1" #for singing
-x25519-dalek = "1.1" #for shared secret
-sha2 = "0.9.3"
-hkdf = "0.11.0"
-aes-gcm = "0.9.0" #PSEC
-aes-gcm-siv = "0.10.0" #Database
-hmac = "0.11.0"
-hex = "0.4.3"
-strum_macros = "0.20.1" #display enums
+sha2 = "0.9"
+aes-gcm = "0.9"
+aes-gcm-siv = "0.10" #Database
+hkdf = "0.11"
+hex = "0.4"
 actix-web = "3"
 actix-multipart = "0.3"
-time = "0.2.25" #needed for actix cookies
+time = "0.2" #needed for actix cookies
 futures = "0.3"
-tungstenite = "0.13.0" #websocket
-serde = "1.0.124" #serialization
-html-escape = "0.2.7"
+tungstenite = "0.13" #websocket
+serde = "1.0" #serialization
+html-escape = "0.2"
 sanitize-filename = "0.3"
-platform-dirs = "0.3.0"
-uuid = {version = "0.8", features = ["v4"]}
-webbrowser = "0.5.5"
+platform-dirs = "0.3"
+uuid = { version = "0.8", features = ["v4"] }
+webbrowser = "0.5"
 libmdns = "0.6" #mDNS advertiser
 multicast_dns = "0.5" #mDNS browser
 if-addrs = "0.6"
-base64 = "0.13.0"
-scrypt = "0.7.0"
-zeroize = "1.2.0"
+base64 = "0.13"
+scrypt = "0.7"
+zeroize = "1.2"
 
 [build-dependencies]
-html-minifier = "3.0.11"
+html-minifier = "3.0"

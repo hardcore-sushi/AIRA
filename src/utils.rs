@@ -2,14 +2,6 @@ use std::{convert::TryInto, time::{SystemTime, UNIX_EPOCH}, path::PathBuf};
 use uuid::Bytes;
 use crate::print_error;
 
-pub fn to_array_48(s: &[u8]) -> [u8; 48] {
-    s.try_into().unwrap()
-}
-
-pub fn to_array_32(s: &[u8]) -> [u8; 32] {
-    s.try_into().unwrap()
-}
-
 pub fn to_uuid_bytes(bytes: &[u8]) -> Option<Bytes> {
     match bytes.try_into() {
         Ok(uuid) => Some(uuid),

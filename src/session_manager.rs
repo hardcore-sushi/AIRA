@@ -1,27 +1,11 @@
-mod session;
-pub mod protocol;
-
 use std::{collections::HashMap, fs::OpenOptions, io::{self, Write}, net::{IpAddr, SocketAddr}, path::PathBuf, str::from_utf8, sync::{Mutex, RwLock, Arc}};
 use tokio::{net::{TcpListener, TcpStream}, sync::mpsc::{self, Sender, Receiver}};
 use libmdns::Service;
-use strum_macros::Display;
-use session::Session;
-use ed25519_dalek::PUBLIC_KEY_LENGTH;
 use uuid::Uuid;
 use platform_dirs::UserDirs;
-use crate::{constants, crypto, discovery, identity::{Contact, Identity}, print_error, utils::{get_unix_timestamp, get_not_used_path}};
+use async_psec::{PUBLIC_KEY_LENGTH, Session, SessionWriteHalf, PsecWriter, PsecReader, PsecError};
+use crate::{constants, protocol, crypto, discovery, identity::{Contact, Identity}, print_error, utils::{get_unix_timestamp, get_not_used_path}};
 use crate::ui_interface::UiConnection;
-use self::session::{SessionWrite, PSECWriter};
-
-#[derive(Display, Debug, PartialEq, Eq)]
-pub enum SessionError {
-    ConnectionReset,
-    BrokenPipe,
-    TransmissionCorrupted,
-    BufferTooLarge,
-    InvalidSessionId,
-    Unknown,
-}
 
 pub enum SessionCommand {
     Send {
@@ -88,7 +72,7 @@ impl SessionManager {
         }
     }
 
-    async fn encrypt_and_send<T: PSECWriter>(&self, writer: &mut T, buff: &[u8]) -> Result<(), SessionError> {
+    async fn encrypt_and_send<T: PsecWriter>(&self, writer: &mut T, buff: &[u8]) -> Result<(), PsecError> {
         let use_padding = self.identity.read().unwrap().as_ref().unwrap().use_padding;
         writer.encrypt_and_send(buff, use_padding).await
     }
@@ -124,17 +108,17 @@ impl SessionManager {
         }
     }
 
-    pub async fn send_command(&self, session_id: &usize, session_command: SessionCommand) -> Result<(), SessionError> {
+    pub async fn send_command(&self, session_id: &usize, session_command: SessionCommand) -> bool {
         if let Some(sender) = self.get_session_sender(session_id) {
             match sender.send(session_command).await {
-                Ok(_) => Ok(()),
+                Ok(_) => true,
                 Err(e) => {
                     print_error!(e);
-                    Err(SessionError::BrokenPipe)
+                    false
                 }
             }
         } else {
-            Err(SessionError::InvalidSessionId)
+            false
         }
     }
 
@@ -147,7 +131,7 @@ impl SessionManager {
         self.not_seen.write().unwrap().retain(|x| x != session_id);
     }
 
-    async fn send_msg(&self, session_id: usize, session_write: &mut SessionWrite, buff: &[u8], is_sending: &mut bool, file_ack_sender: &mut Option<Sender<bool>>) -> Result<(), SessionError> {
+    async fn send_msg(&self, session_id: usize, session_write: &mut SessionWriteHalf, buff: &[u8], is_sending: &mut bool, file_ack_sender: &mut Option<Sender<bool>>) -> Result<(), PsecError> {
         self.encrypt_and_send(session_write, &buff).await?;
         if buff[0] == protocol::Headers::ACCEPT_LARGE_FILES {
             self.sessions.write().unwrap().get_mut(&session_id).unwrap().files_download.as_mut().unwrap().accepted = true;
@@ -177,15 +161,16 @@ impl SessionManager {
         let mut msg_queue = Vec::new();
         let mut is_sending = false;
 
-        let (session_read, mut session_write) = session.into_spit().unwrap();
-        let receiving = session_read.receive_and_decrypt();
+        let (session_read, mut session_write) = session.into_split().unwrap();
+        let receiving = session_read.into_receive_and_decrypt();
         tokio::pin!(receiving);
         loop {
             tokio::select! {
                 result = &mut receiving => {
-                    match result {
-                        Ok((session_read, buffer)) => {
-                            receiving.set(session_read.receive_and_decrypt());
+                    match result.0 {
+                        Ok(buffer) => {
+                            let session_read = result.1;
+                            receiving.set(session_read.into_receive_and_decrypt());
                             match buffer[0] {
                                 protocol::Headers::ASK_NAME => {
                                     let name = {
@@ -378,7 +363,7 @@ impl SessionManager {
                             }
                         }
                         Err(e) => {
-                            if e != SessionError::BrokenPipe && e != SessionError::ConnectionReset && e != SessionError::BufferTooLarge {
+                            if e != PsecError::BrokenPipe && e != PsecError::ConnectionReset && e != PsecError::BufferTooLarge {
                                 print_error!(e);
                             }
                             break;
@@ -444,7 +429,7 @@ impl SessionManager {
                 };
                 match identity {
                     Some(identity) => {
-                        match session.do_handshake(&identity).await {
+                        match session.do_handshake(&identity.keypair).await {
                             Ok(_) => {
                                 peer_public_key = session.peer_public_key.unwrap();
                                 if identity.get_public_key() != peer_public_key {
@@ -463,7 +448,7 @@ impl SessionManager {
                 }
             };
             if let Some(mut session) = session {
-                let ip = session.get_ip();
+                let ip = session.get_addr().unwrap().ip();
                 let mut is_contact = false;
                 let session_data = {
                     let mut sessions = session_manager.sessions.write().unwrap();
