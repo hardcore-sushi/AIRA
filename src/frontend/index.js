@@ -1071,6 +1071,7 @@ function displayChatBottom(speed = undefined) {
 function displayHistory(scrollToBottom = true) {
     msg_log.style.display = "block";
     msg_log.innerHTML = "";
+    let session = sessionsData.get(currentSessionId);
     let previousOutgoing = undefined;
     msgHistory.get(currentSessionId).forEach(entry => {
         let name = undefined;
@@ -1079,7 +1080,7 @@ function displayHistory(scrollToBottom = true) {
             if (entry[0]) { //outgoing msg
                 name = identityName;
             } else {
-                name = sessionsData.get(currentSessionId).name;
+                name = session.name;
             }
         }
         if (entry[1]) { //is file
@@ -1091,7 +1092,9 @@ function displayHistory(scrollToBottom = true) {
     if (scrollToBottom) {
         msg_log.scrollTop = msg_log.scrollHeight;
     }
-    if (msg_log.scrollHeight <= msg_log.clientHeight) {
-        socket.send("load_msgs "+currentSessionId);
+    if (typeof session !== "undefined") {
+        if (msg_log.scrollHeight <= msg_log.clientHeight && session.isContact) {
+            socket.send("load_msgs "+currentSessionId);
+        }
     }
 }

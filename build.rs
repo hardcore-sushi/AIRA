@@ -1,6 +1,7 @@
+#[cfg(not(debug_assertions))]
 use std::{env, fs::{File, read_to_string, create_dir}, path::Path, io::{Write, ErrorKind}};
 
-#[allow(dead_code)]
+#[cfg(not(debug_assertions))]
 fn minify_content(content: &str, language: &str) -> Option<String> {
     match language {
         "html" => Some(html_minifier::minify(content).unwrap()),
@@ -10,8 +11,10 @@ fn minify_content(content: &str, language: &str) -> Option<String> {
     }
 }
 
-#[allow(dead_code)]
-fn minify_web_files() {
+#[cfg(not(debug_assertions))]
+fn generate_web_files() {
+    use yaml_rust::YamlLoader;
+    
     let out_dir = env::var("OUT_DIR").unwrap();
     let out_dir = Path::new(&out_dir);
     let src_dir = Path::new("src/frontend");
@@ -22,23 +25,35 @@ fn minify_web_files() {
         }
     }
 
+    let config = &YamlLoader::load_from_str(&read_to_string("config.yml").unwrap()).unwrap()[0];
+    let css_values = config["css"].as_hash().unwrap();
+
     [
         "login.html",
         "index.html",
         "index.css",
         "index.js",
         "commons/style.css",
-        "commons/script.js"
+        "commons/script.js",
     ].iter().for_each(|file_name| {
-        let file_name = Path::new(file_name);
-        let content = read_to_string(src_dir.join(file_name)).unwrap();
-        let minified_content = minify_content(&content, file_name.extension().unwrap().to_str().unwrap()).unwrap();
-        let mut dst = File::create(out_dir.join(file_name)).unwrap();
+        let path = Path::new(file_name);
+        let extension = path.extension().unwrap().to_str().unwrap();
+        let mut content = read_to_string(src_dir.join(path)).unwrap();
+        if extension == "css" {
+            css_values.into_iter().for_each(|entry| {
+                content = content.replace(entry.0.as_str().unwrap(), entry.1.as_str().unwrap());
+            });
+        }
+        if file_name == &"index.html" {
+            content = content.replace("AIRA_VERSION", env!("CARGO_PKG_VERSION"));
+        }
+        let minified_content = minify_content(&content, extension).unwrap();
+        let mut dst = File::create(out_dir.join(path)).unwrap();
         dst.write(minified_content.as_bytes()).unwrap();
     });
 }
 
 fn main() {
     #[cfg(not(debug_assertions))]
-    minify_web_files();
+    generate_web_files();
 }

@@ -550,14 +550,14 @@ async fn handle_index(req: HttpRequest) -> HttpResponse {
     if is_authenticated(&req) {
         let global_vars_read = global_vars.read().unwrap();
         #[cfg(debug_assertions)]
-        let html = fs::read_to_string("src/frontend/index.html").unwrap();
+        let html = fs::read_to_string("src/frontend/index.html").unwrap()
+            .replace("AIRA_VERSION", env!("CARGO_PKG_VERSION"));
         #[cfg(not(debug_assertions))]
         let html = include_str!(concat!(env!("OUT_DIR"), "/index.html"));
         let public_key = global_vars_read.session_manager.identity.read().unwrap().as_ref().unwrap().get_public_key();
         let use_padding = global_vars_read.session_manager.identity.read().unwrap().as_ref().unwrap().use_padding.to_string();
         HttpResponse::Ok().body(
             html
-                .replace("AIRA_VERSION", env!("CARGO_PKG_VERSION"))
                 .replace("IDENTITY_FINGERPRINT", &crypto::generate_fingerprint(&public_key))
                 .replace("WEBSOCKET_PORT", &global_vars_read.websocket_port.to_string())
                 .replace("IS_IDENTITY_PROTECTED", &Identity::is_protected().unwrap().to_string())
@@ -569,6 +569,18 @@ async fn handle_index(req: HttpRequest) -> HttpResponse {
 }
 
 const JS_CONTENT_TYPE: &str = "text/javascript";
+
+#[cfg(debug_assertions)]
+fn replace_css(file_path: &str) -> String {
+    use yaml_rust::YamlLoader;
+    let mut content = fs::read_to_string(file_path).unwrap();
+    let config = &YamlLoader::load_from_str(&fs::read_to_string("config.yml").unwrap()).unwrap()[0];
+    let css_values = config["css"].as_hash().unwrap();
+    css_values.into_iter().for_each(|entry| {
+        content = content.replace(entry.0.as_str().unwrap(), entry.1.as_str().unwrap());
+    });
+    content
+}
 
 fn handle_static(req: HttpRequest) -> HttpResponse {
     let splits: Vec<&str> = req.path()[1..].split("/").collect();
@@ -584,7 +596,7 @@ fn handle_static(req: HttpRequest) -> HttpResponse {
             }
             "index.css" => {
                 #[cfg(debug_assertions)]
-                return response_builder.body(fs::read_to_string("src/frontend/index.css").unwrap());
+                return response_builder.body(replace_css("src/frontend/index.css"));
                 #[cfg(not(debug_assertions))]
                 return response_builder.body(include_str!(concat!(env!("OUT_DIR"), "/index.css")));
             }
@@ -643,7 +655,7 @@ fn handle_static(req: HttpRequest) -> HttpResponse {
                         }
                         "style.css" => {
                             #[cfg(debug_assertions)]
-                            return response_builder.body(fs::read_to_string("src/frontend/commons/style.css").unwrap());
+                            return response_builder.body(replace_css("src/frontend/commons/style.css"));
                             #[cfg(not(debug_assertions))]
                             return response_builder.body(include_str!(concat!(env!("OUT_DIR"), "/commons/style.css")));
                         }

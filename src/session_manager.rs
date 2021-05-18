@@ -85,9 +85,9 @@ impl SessionManager {
 
     pub fn store_msg(&self, session_id: &usize, outgoing: bool, buffer: Vec<u8>) {
         let mut msg_saved = false;
-        if self.is_contact(session_id) {
-            let mut offsets = self.last_loaded_msg_offsets.write().unwrap(); //locking mutex before modifying the DB to prevent race conditions
-            match self.identity.read().unwrap().as_ref().unwrap().store_msg(&self.loaded_contacts.read().unwrap().get(session_id).unwrap().uuid, outgoing, &buffer) {
+        if let Some(contact) = self.loaded_contacts.read().unwrap().get(session_id) {
+            let mut offsets = self.last_loaded_msg_offsets.write().unwrap(); //locking mutex before modifying the DB to prevent race conditions with load_msgs()
+            match self.identity.read().unwrap().as_ref().unwrap().store_msg(&contact.uuid, outgoing, &buffer) {
                 Ok(_) => {
                     *offsets.get_mut(session_id).unwrap() += 1;
                     msg_saved = true;
@@ -607,10 +607,6 @@ impl SessionManager {
         result
     }
 
-    pub fn is_contact(&self, session_id: &usize) -> bool {
-        self.loaded_contacts.read().unwrap().contains_key(session_id)
-    }
-
     pub fn store_file(&self, session_id: &usize, data: &[u8]) -> Result<Uuid, rusqlite::Error> {
         self.identity.read().unwrap().as_ref().unwrap().store_file(match self.loaded_contacts.read().unwrap().get(session_id) {
             Some(contact) => Some(contact.uuid),
@@ -621,12 +617,12 @@ impl SessionManager {
     pub fn load_msgs(&self, session_id: &usize, count: usize) -> Option<Vec<(bool, Vec<u8>)>> {
         let mut offsets = self.last_loaded_msg_offsets.write().unwrap();
         let msgs = self.identity.read().unwrap().as_ref().unwrap().load_msgs(
-            &self.loaded_contacts.read().unwrap().get(session_id).unwrap().uuid,
-            *offsets.get(session_id).unwrap(),
+            &self.loaded_contacts.read().unwrap().get(session_id)?.uuid,
+            *offsets.get(session_id)?,
             count
         );
         if let Some(msgs) = msgs.as_ref() {
-            *offsets.get_mut(session_id).unwrap() += msgs.len();
+            *offsets.get_mut(session_id)? += msgs.len();
         }
         msgs
     }

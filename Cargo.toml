@@ -35,6 +35,8 @@ if-addrs = "0.6"
 base64 = "0.13"
 scrypt = "0.7"
 zeroize = "1.2"
+yaml-rust = "0.4" #only in debug mode
 
 [build-dependencies]
 html-minifier = "3.0"
+yaml-rust = "0.4"

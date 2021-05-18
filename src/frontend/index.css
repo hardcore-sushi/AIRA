@@ -57,7 +57,7 @@ input[type="file"] {
     cursor: pointer;
 }
 .file_picker::after {
-    content: url("/static/imgs/icons/attach/19a52c");
+    content: url("/static/imgs/icons/attach/ACCENT_COLOR");
     width: 2em;
 }
 .popup {
@@ -126,7 +126,7 @@ input[type="file"] {
     font-size: 0.9em;
 }
 .popup h2.warning::before {
-    content: url("/static/imgs/icons/warning/19a52c");
+    content: url("/static/imgs/icons/warning/ACCENT_COLOR");
     width: 9%;
     display: inline-block;
     vertical-align: middle;
@@ -272,7 +272,7 @@ label {
     background-color: #333940;
 }
 #left_panel ul li p::after {
-    content: url("/static/imgs/icons/warning/19a52c");
+    content: url("/static/imgs/icons/warning/ACCENT_COLOR");
     display: inline-block;
     width: 1em;
     margin-left: 5px;
@@ -282,7 +282,7 @@ label {
     content: unset;
 }
 #left_panel ul li.is_verified p::after {
-    content: url("/static/imgs/icons/verified/19a52c");
+    content: url("/static/imgs/icons/verified/ACCENT_COLOR");
 }
 #left_panel ul li .not_seen_marker {
     width: 12px;
@@ -316,7 +316,7 @@ label {
 }
 #show_local_ips:hover::after {
     background-color: unset;
-    content: url("/static/imgs/icons/info/19a52c");
+    content: url("/static/imgs/icons/info/ACCENT_COLOR");
 }
 .popup ul {
     list-style-type: unset;
@@ -341,7 +341,7 @@ label {
     margin: 0;
 }
 #chat_header p::after {
-    content: url("/static/imgs/icons/warning/19a52c");
+    content: url("/static/imgs/icons/warning/ACCENT_COLOR");
     display: inline-block;
     width: 1.2em;
     vertical-align: middle;
@@ -351,7 +351,7 @@ label {
     content: unset;
 }
 #chat_header.is_verified p::after {
-    content: url("/static/imgs/icons/verified/19a52c");
+    content: url("/static/imgs/icons/verified/ACCENT_COLOR");
 }
 #chat_header.is_contact #delete_conversation::after {
     content: url("/static/imgs/icons/delete_conversation");
@@ -403,7 +403,7 @@ label {
 #file_cancel::after {
     background-color: unset;
     width: 20px;
-    content: url("/static/imgs/icons/cancel/19a52c");
+    content: url("/static/imgs/icons/cancel/ACCENT_COLOR");
 }
 #file_progress {
     display: none;
@@ -477,7 +477,7 @@ label {
     color: var(--accent);
 }
 #msg_log .file a::after {
-    content: url("/static/imgs/icons/download/19a52c");
+    content: url("/static/imgs/icons/download/ACCENT_COLOR");
     display: block;
     width: 2em;
     margin-left: 15px;
