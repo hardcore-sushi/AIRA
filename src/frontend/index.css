@@ -194,11 +194,18 @@ label {
 #session_info .name button::after {
     content: url("/static/imgs/icons/refresh");
 }
-#session_info p:first-of-type, #session_info pre {
-    display: inline-block;
+#session_info .session_field {
+    display: flex;
+    gap: .3em;
 }
-#session_info p, #session_info pre {
+#session_info .session_field p {
     margin-top: 0;
+}
+#session_info .session_field p:first-child {
+    color: #34db4a;
+}
+#session_info .session_field p:last-child {
+    font-weight: bold;
 }
 .button_row {
     display: flex;

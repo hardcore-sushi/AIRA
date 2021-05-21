@@ -79,7 +79,7 @@ impl SessionManager {
 
     pub async fn connect_to(session_manager: Arc<SessionManager>, ip: IpAddr) -> io::Result<()> {
         let stream = TcpStream::connect(SocketAddr::new(ip, constants::PORT)).await?;
-        SessionManager::handle_new_session(session_manager, Session::new(stream), true);
+        SessionManager::handle_new_session(session_manager, Session::from(stream), true);
         Ok(())
     }
 
@@ -448,7 +448,7 @@ impl SessionManager {
                 }
             };
             if let Some(mut session) = session {
-                let ip = session.get_addr().unwrap().ip();
+                let ip = session.peer_addr().unwrap().ip();
                 let mut is_contact = false;
                 let session_data = {
                     let mut sessions = session_manager.sessions.write().unwrap();
@@ -531,7 +531,7 @@ impl SessionManager {
                     client = server_v4.accept() => client,
                     _ = receiver.recv() => break
                 }).unwrap();
-                SessionManager::handle_new_session(session_manager.clone(), Session::new(stream), false);
+                SessionManager::handle_new_session(session_manager.clone(), Session::from(stream), false);
             }
         });
         Ok(())

@@ -771,6 +771,17 @@ function beautifyFingerprint(f) {
     }
     return f;
 }
+function generateSessionField(name, value) {
+    let div = document.createElement("div");
+    div.classList.add("session_field");
+    let pName = document.createElement("p");
+    pName.textContent = name+':';
+    div.appendChild(pName);
+    let pValue = document.createElement("p");
+    pValue.textContent = value;
+    div.appendChild(pValue);
+    return div;
+}
 function showSessionInfoPopup() {
     let session = sessionsData.get(currentSessionId);
     if (typeof session !== "undefined") {
@@ -790,25 +801,29 @@ function showSessionInfoPopup() {
             nameDiv.appendChild(button);
         }
         mainDiv.appendChild(nameDiv);
-        let pFingerprint = document.createElement("p");
-        pFingerprint.textContent = "Fingerprint:";
-        mainDiv.appendChild(pFingerprint);
-        let pre = document.createElement("pre");
-        pre.textContent = ' '+beautifyFingerprint(session.fingerprint);
-        mainDiv.appendChild(pre);
         if (session.isOnline) {
-            let pIp = document.createElement("p");
-            pIp.textContent = "IP: "+session.ip;
-            mainDiv.appendChild(pIp);
-            let pConnection = document.createElement("p");
-            pConnection.textContent = "Connection: ";
+            mainDiv.appendChild(generateSessionField("Peer IP", session.ip));
+            let connection;
             if (session.outgoing) {
-                pConnection.textContent += "outgoing";
+                connection = generateSessionField("Connection", "outgoing");
             } else {
-                pConnection.textContent += "incomming";
+                connection = generateSessionField("Connection", "incoming");
             }
-            mainDiv.appendChild(pConnection);
+            mainDiv.appendChild(connection);
         }
+        if (session.isContact) {
+            mainDiv.appendChild(generateSessionField("Is contact", "yes"));
+            let isVerified;
+            if (session.isVerified) {
+                isVerified = generateSessionField("Is verified", "yes");
+            } else {
+                isVerified = generateSessionField("Is verified", "no");
+            }
+            mainDiv.appendChild(isVerified);
+        } else {
+            mainDiv.appendChild(generateSessionField("Is contact", "no"));
+        }
+        mainDiv.appendChild(generateSessionField("Fingerprint", beautifyFingerprint(session.fingerprint)));
         showPopup(mainDiv);
     }
 }

@@ -395,8 +395,9 @@ dependencies = [
 
 [[package]]
 name = "async-psec"
-version = "0.1.0"
-source = "git+https://forge.chapril.org/hardcoresushi/async-psec#9d2713aea1e982d7c0f10a466268f623a87ec5d9"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "58ab60657d7b3949c3bdb06570fc4855a4e83dbe6c9da73902c67355dd8f37a8"
 dependencies = [
  "aes-gcm",
  "async-trait",
