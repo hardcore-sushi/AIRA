@@ -5,26 +5,27 @@ pub struct Headers;
 
 impl Headers {
     pub const MESSAGE: u8 = 0x00;
-    pub const ASK_NAME: u8 = 0x01;
-    pub const TELL_NAME: u8 = 0x02;
-    pub const FILE: u8 = 0x03;
-    pub const ASK_LARGE_FILES: u8 = 0x04;
-    pub const ACCEPT_LARGE_FILES: u8 = 0x05;
-    pub const LARGE_FILE_CHUNK: u8 = 0x06;
-    pub const ACK_CHUNK: u8 = 0x07;
-    pub const ABORT_FILES_TRANSFER: u8 = 0x08;
+    pub const FILE: u8 = 0x01;
+    pub const ASK_PROFILE_INFO: u8 = 0x02;
+    pub const NAME: u8 = 0x03;
+    pub const AVATAR: u8 = 0x04;
+    pub const ASK_LARGE_FILES: u8 = 0x05;
+    pub const ACCEPT_LARGE_FILES: u8 = 0x06;
+    pub const LARGE_FILE_CHUNK: u8 = 0x07;
+    pub const ACK_CHUNK: u8 = 0x08;
+    pub const ABORT_FILES_TRANSFER: u8 = 0x09;
 }
 
 pub fn new_message(message: String) -> Vec<u8> {
     [&[Headers::MESSAGE], message.as_bytes()].concat()
 }
 
-pub fn ask_name() -> Vec<u8> {
-    vec![Headers::ASK_NAME]
+pub fn ask_profile_info() -> Vec<u8> {
+    vec![Headers::ASK_PROFILE_INFO]
 }
 
-pub fn tell_name(name: &str) -> Vec<u8> {
-    [&[Headers::TELL_NAME], name.as_bytes()].concat()
+pub fn name(name: &str) -> Vec<u8> {
+    [&[Headers::NAME], name.as_bytes()].concat()
 }
 
 pub fn file(file_name: &str, buffer: &[u8]) -> Vec<u8> {
@@ -79,4 +80,8 @@ pub fn parse_ask_files(buffer: &[u8]) -> Option<Vec<(u64, String)>> {
         }
     }
     Some(files_info)
+}
+
+pub fn avatar(avatar: &[u8]) -> Vec<u8> {
+    [&[Headers::AVATAR], avatar].concat()
 }

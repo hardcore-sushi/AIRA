@@ -67,7 +67,7 @@ input[type="file"] {
     left: 0;
     right: 0;
     margin: auto;
-    width: 40%;
+    width: 40vw;
     max-height: 90vh;
     overflow: auto;
     box-sizing: border-box;
@@ -101,29 +101,6 @@ input[type="file"] {
 .popup .close::after {
     content: url("/static/imgs/icons/cancel");
     background-color: unset;
-}
-.popup .avatar {
-    font-size: 4em;
-    margin: auto;
-}
-.popup section {
-    display: block;
-    margin-bottom: 20px;
-    border-top: 1px solid black;
-}
-.popup section:first-of-type {
-    border-top: unset;
-}
-.popup input {
-    display: block;
-    margin: 10px;
-}
-.popup span {
-    font-weight: bold;
-}
-.popup>div>div p {
-    font-weight: normal;
-    font-size: 0.9em;
 }
 .popup h2.warning::before {
     content: url("/static/imgs/icons/warning/ACCENT_COLOR");
@@ -186,6 +163,57 @@ label {
 }
 .switch input:checked + span:before {
   transform: translateX(26px);
+}
+#avatarContainer {
+    display: flex;
+    justify-content: center;
+}
+#avatarContainer .avatar {
+    font-size: 4em;
+    margin-right: unset;
+}
+#avatarContainer label:hover .avatar {
+    opacity: .4;
+}
+#avatarContainer>label {
+    position: relative;
+}
+#avatarContainer .avatar + p {
+    display: none;
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    left: 0;
+    right: 0;
+    margin: auto;
+    text-align: center;
+}
+#avatarContainer label:hover p {
+    display: block;
+}
+#profile_info section {
+    display: block;
+    margin-bottom: 20px;
+    border-top: 1px solid black;
+}
+#profile_info section:first-of-type {
+    border-top: unset;
+}
+#profile_info input {
+    margin: 10px;
+}
+#profile_info span {
+    font-weight: bold;
+}
+#profile_info>div>div p {
+    font-weight: normal;
+    font-size: 0.9em;
+}
+#session_info .avatar {
+    width: 6em;
+    height: 6em;
+    display: block;
+    margin: auto;
 }
 #session_info .name {
     display: flex;

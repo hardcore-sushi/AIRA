@@ -40,6 +40,7 @@ pub struct LargeFilesDownload {
 #[derive(Clone)]
 pub struct SessionData {
     pub name: String,
+    avatar: Option<Uuid>,
     pub outgoing: bool,
     pub peer_public_key: [u8; PUBLIC_KEY_LENGTH],
     pub ip: IpAddr,
@@ -54,7 +55,7 @@ pub struct SessionManager {
     ui_connection: Mutex<Option<UiConnection>>,
     loaded_contacts: RwLock<HashMap<usize, Contact>>,
     pub last_loaded_msg_offsets: RwLock<HashMap<usize, usize>>,
-    pub saved_msgs: Mutex<HashMap<usize, Vec<(bool, Vec<u8>)>>>,
+    pub saved_msgs: RwLock<HashMap<usize, Vec<(bool, Vec<u8>)>>>,
     pub not_seen: RwLock<Vec<usize>>,
     mdns_service: Mutex<Option<Service>>,
     listener_stop_signal: Mutex<Option<Sender<()>>>,
@@ -70,6 +71,10 @@ impl SessionManager {
             }
             None => {}
         }
+    }
+
+    fn get_all_senders(&self) -> Vec<Sender<SessionCommand>> {
+        self.sessions.read().unwrap().iter().map(|i| i.1.sender.clone()).collect()
     }
 
     async fn encrypt_and_send<T: PsecWriter>(&self, writer: &mut T, buff: &[u8]) -> Result<(), PsecError> {
@@ -96,7 +101,7 @@ impl SessionManager {
             }
         }
         if !msg_saved {
-            self.saved_msgs.lock().unwrap().get_mut(&session_id).unwrap().push((false, buffer));
+            self.saved_msgs.write().unwrap().get_mut(&session_id).unwrap().push((outgoing, buffer));
         }
     }
 
@@ -127,7 +132,7 @@ impl SessionManager {
             ui_connection.on_disconnected(&session_id);
         });
         self.sessions.write().unwrap().remove(session_id);
-        self.saved_msgs.lock().unwrap().remove(session_id);
+        self.saved_msgs.write().unwrap().remove(session_id);
         self.not_seen.write().unwrap().retain(|x| x != session_id);
     }
 
@@ -172,64 +177,6 @@ impl SessionManager {
                             let session_read = result.1;
                             receiving.set(session_read.into_receive_and_decrypt());
                             match buffer[0] {
-                                protocol::Headers::ASK_NAME => {
-                                    let name = {
-                                        self.identity.read().unwrap().as_ref().and_then(|identity| Some(identity.name.clone()))
-                                    };
-                                    if name.is_some() { //can be None if we log out just before locking the identity mutex
-                                        if let Err(e) = self.encrypt_and_send(&mut session_write, &protocol::tell_name(&name.unwrap())).await {
-                                            print_error!(e);
-                                            break;
-                                        }
-                                    }
-                                }
-                                protocol::Headers::TELL_NAME => {
-                                    match from_utf8(&buffer[1..]) {
-                                        Ok(new_name) => {
-                                            let new_name = new_name.replace('\n', " ");
-                                            self.with_ui_connection(|ui_connection| {
-                                                ui_connection.on_name_told(&session_id, &new_name);
-                                            });
-                                            let mut loaded_contacts = self.loaded_contacts.write().unwrap();
-                                            if let Some(contact) = loaded_contacts.get_mut(&session_id) {
-                                                contact.name = new_name.to_string();
-                                                if let Err(e) = self.identity.read().unwrap().as_ref().unwrap().change_contact_name(&contact.uuid, &new_name) {
-                                                    print_error!(e);
-                                                }
-                                            } else {
-                                                self.sessions.write().unwrap().get_mut(&session_id).unwrap().name = new_name.to_string();
-                                            }
-                                        }
-                                        Err(e) => print_error!(e)
-                                    }
-                                }
-                                protocol::Headers::ASK_LARGE_FILES => {
-                                    if self.sessions.read().unwrap().get(&session_id).unwrap().files_download.is_none() && !is_sending { //don't accept 2 file transfers at the same time
-                                        if let Some(files_info) = protocol::parse_ask_files(&buffer) {
-                                            let download_location = UserDirs::new().unwrap().download_dir;
-                                            let files: Vec<LargeFileDownload> = files_info.into_iter().map(|info| {
-                                                LargeFileDownload {
-                                                    file_name: info.1,
-                                                    file_size: info.0,
-                                                    transferred: 0,
-                                                    last_chunk: get_unix_timestamp(),
-                                                }
-                                            }).collect();
-                                            self.sessions.write().unwrap().get_mut(&session_id).unwrap().files_download = Some(LargeFilesDownload {
-                                                download_location: download_location.clone(),
-                                                accepted: false,
-                                                index: 0,
-                                                files: files.clone(),
-                                            });
-                                            self.with_ui_connection(|ui_connection| {
-                                                ui_connection.on_ask_large_files(&session_id, &files, download_location.to_str().unwrap());
-                                            })
-                                        }
-                                    } else if let Err(e) = self.encrypt_and_send(&mut session_write, &[protocol::Headers::ABORT_FILES_TRANSFER]).await {
-                                        print_error!(e);
-                                        break;
-                                    }
-                                }
                                 protocol::Headers::LARGE_FILE_CHUNK => {
                                     let mut should_accept_chunk = false;
                                     {
@@ -321,6 +268,103 @@ impl SessionManager {
                                     self.with_ui_connection(|ui_connection| {
                                         ui_connection.on_received(&session_id, &buffer);
                                     });
+                                }
+                                protocol::Headers::ASK_LARGE_FILES => {
+                                    if self.sessions.read().unwrap().get(&session_id).unwrap().files_download.is_none() && !is_sending { //don't accept 2 file transfers at the same time
+                                        if let Some(files_info) = protocol::parse_ask_files(&buffer) {
+                                            let download_location = UserDirs::new().unwrap().download_dir;
+                                            let files: Vec<LargeFileDownload> = files_info.into_iter().map(|info| {
+                                                LargeFileDownload {
+                                                    file_name: info.1,
+                                                    file_size: info.0,
+                                                    transferred: 0,
+                                                    last_chunk: get_unix_timestamp(),
+                                                }
+                                            }).collect();
+                                            self.sessions.write().unwrap().get_mut(&session_id).unwrap().files_download = Some(LargeFilesDownload {
+                                                download_location: download_location.clone(),
+                                                accepted: false,
+                                                index: 0,
+                                                files: files.clone(),
+                                            });
+                                            self.with_ui_connection(|ui_connection| {
+                                                ui_connection.on_ask_large_files(&session_id, &files, download_location.to_str().unwrap());
+                                            })
+                                        }
+                                    } else if let Err(e) = self.encrypt_and_send(&mut session_write, &[protocol::Headers::ABORT_FILES_TRANSFER]).await {
+                                        print_error!(e);
+                                        break;
+                                    }
+                                }
+                                protocol::Headers::ASK_PROFILE_INFO => {
+                                    let identity = {
+                                        self.identity.read().unwrap().clone()
+                                    };
+                                    if let Some(identity) = identity { //can be None if we log out just before locking the identity mutex
+                                        match self.encrypt_and_send(&mut session_write, &protocol::name(&identity.name)).await {
+                                            Ok(_) => {
+                                                if let Ok(avatar) = Identity::get_identity_avatar() {
+                                                    if let Err(e) = self.encrypt_and_send(&mut session_write, &protocol::avatar(&avatar)).await {
+                                                        print_error!(e);
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                print_error!(e);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                protocol::Headers::NAME => {
+                                    match from_utf8(&buffer[1..]) {
+                                        Ok(new_name) => {
+                                            let new_name = new_name.replace('\n', " ");
+                                            self.with_ui_connection(|ui_connection| {
+                                                ui_connection.on_name_told(&session_id, &new_name);
+                                            });
+                                            let mut loaded_contacts = self.loaded_contacts.write().unwrap();
+                                            if let Some(contact) = loaded_contacts.get_mut(&session_id) {
+                                                contact.name = new_name.to_string();
+                                                if let Err(e) = self.identity.read().unwrap().as_ref().unwrap().change_contact_name(&contact.uuid, &new_name) {
+                                                    print_error!(e);
+                                                }
+                                            } else {
+                                                self.sessions.write().unwrap().get_mut(&session_id).unwrap().name = new_name.to_string();
+                                            }
+                                        }
+                                        Err(e) => print_error!(e)
+                                    }
+                                }
+                                protocol::Headers::AVATAR => {
+                                    if buffer.len() < 10000000 {
+                                        match image::load_from_memory(&buffer[1..]) {
+                                            Ok(image) => {
+                                                drop(image);
+                                                let identity_opt = self.identity.read().unwrap();
+                                                let identity = identity_opt.as_ref().unwrap();
+                                                match identity.store_avatar(&buffer[1..]) {
+                                                    Ok(avatar_uuid) => {
+                                                        let mut loaded_contacts = self.loaded_contacts.write().unwrap();
+                                                        if let Some(contact) = loaded_contacts.get_mut(&session_id) {
+                                                            contact.avatar = Some(avatar_uuid);
+                                                            if let Err(e) = identity.set_contact_avatar(&contact.uuid, &avatar_uuid) {
+                                                                print_error!(e);
+                                                            }
+                                                        } else {
+                                                            self.sessions.write().unwrap().get_mut(&session_id).unwrap().avatar = Some(avatar_uuid);
+                                                        }
+                                                        self.with_ui_connection(|ui_connection| {
+                                                            ui_connection.on_avatar_set(&session_id);
+                                                        });
+                                                    }
+                                                    Err(e) => print_error!(e)
+                                                }
+                                            }
+                                            Err(e) => print_error!(e)
+                                        }
+                                    }
                                 }
                                 _ => {
                                     let header = buffer[0];
@@ -421,11 +465,7 @@ impl SessionManager {
             let mut peer_public_key = [0; PUBLIC_KEY_LENGTH];
             let session = {
                 let identity = {
-                    let identity_opt = session_manager.identity.read().unwrap();
-                    match identity_opt.as_ref() {
-                        Some(identity) => Some(identity.clone()),
-                        None => None
-                    }
+                    session_manager.identity.read().unwrap().clone()
                 };
                 match identity {
                     Some(identity) => {
@@ -461,8 +501,9 @@ impl SessionManager {
                     }
                     if is_new_session && session_manager.is_identity_loaded() { //check if we didn't logged out during the handshake
                         let (sender, receiver) = mpsc::channel(32);
-                        let session_data = SessionData{
+                        let session_data = SessionData {
                             name: ip.to_string(),
+                            avatar: None,
                             outgoing,
                             peer_public_key,
                             ip,
@@ -485,7 +526,7 @@ impl SessionManager {
                             *session_counter += 1;
                         }
                         let session_id = session_id.unwrap();
-                        session_manager.saved_msgs.lock().unwrap().insert(session_id, Vec::new());
+                        session_manager.saved_msgs.write().unwrap().insert(session_id, Vec::new());
                         Some((session_id, receiver))
                     } else {
                         None
@@ -497,7 +538,7 @@ impl SessionManager {
                         ui_connection.on_new_session(&session_id, &ip.to_string(), outgoing, &crypto::generate_fingerprint(&peer_public_key), ip, None);
                     });
                     if !is_contact {
-                        match session_manager.encrypt_and_send(&mut session, &protocol::ask_name()).await {
+                        match session_manager.encrypt_and_send(&mut session, &protocol::ask_profile_info()).await {
                             Ok(_) => {}
                             Err(e) => {
                                 print_error!(e);
@@ -542,7 +583,7 @@ impl SessionManager {
     }
 
     pub fn get_saved_msgs(&self) -> HashMap<usize, Vec<(bool, Vec<u8>)>> {
-        self.saved_msgs.lock().unwrap().clone()
+        self.saved_msgs.read().unwrap().clone()
     }
 
     pub fn set_seen(&self, session_id: usize, seen: bool) {
@@ -567,8 +608,10 @@ impl SessionManager {
         }
     }
 
-    pub fn add_contact(&self, session_id: usize, name: String) -> Result<(), rusqlite::Error> {
-        let contact = self.identity.read().unwrap().as_ref().unwrap().add_contact(name, self.sessions.read().unwrap().get(&session_id).unwrap().peer_public_key)?;
+    pub fn add_contact(&self, session_id: usize) -> Result<(), rusqlite::Error> {
+        let sessions = self.sessions.read().unwrap();
+        let session = sessions.get(&session_id).unwrap();
+        let contact = self.identity.read().unwrap().as_ref().unwrap().add_contact(session.name.clone(), session.avatar, session.peer_public_key)?;
         self.loaded_contacts.write().unwrap().insert(session_id, contact);
         self.last_loaded_msg_offsets.write().unwrap().insert(session_id, 0);
         Ok(())
@@ -581,6 +624,7 @@ impl SessionManager {
             if let Some(contact) = loaded_contacts.remove(&session_id) {
                 if let Some(session) = self.sessions.write().unwrap().get_mut(&session_id) {
                     session.name = contact.name;
+                    session.avatar = contact.avatar;
                 }
             }
             self.last_loaded_msg_offsets.write().unwrap().remove(&session_id);
@@ -602,7 +646,7 @@ impl SessionManager {
         let result = Identity::delete_conversation(&self.loaded_contacts.read().unwrap().get(&session_id).unwrap().uuid);
         if result.is_ok() {
             self.last_loaded_msg_offsets.write().unwrap().insert(session_id, 0);
-            self.saved_msgs.lock().unwrap().insert(session_id, Vec::new());
+            self.saved_msgs.write().unwrap().insert(session_id, Vec::new());
         }
         result
     }
@@ -627,15 +671,32 @@ impl SessionManager {
         msgs
     }
 
+    pub fn get_avatar(&self, session_id: &usize) -> Option<Vec<u8>> {
+        let avatar_uuid = match self.loaded_contacts.read().unwrap().get(session_id) {
+            Some(contact) => contact.avatar?,
+            None => self.sessions.read().unwrap().get(session_id)?.avatar?
+        };
+        self.identity.read().unwrap().as_ref().unwrap().get_avatar(&avatar_uuid)
+    }
+
+    #[allow(unused_must_use)]
+    pub async fn set_avatar(&self, avatar: &[u8]) -> Result<(), rusqlite::Error> {
+        Identity::set_identity_avatar(&avatar)?;
+        let avatar_msg = protocol::avatar(&avatar);
+        for sender in self.get_all_senders().into_iter() {
+            sender.send(SessionCommand::Send {
+                buff: avatar_msg.clone()
+            }).await;
+        }
+        Ok(())
+    }
+
     #[allow(unused_must_use)]
     pub async fn change_name(&self, new_name: String) -> Result<usize, rusqlite::Error> {
-        let telling_name = protocol::tell_name(&new_name);
+        let telling_name = protocol::name(&new_name);
         let result = self.identity.write().unwrap().as_mut().unwrap().change_name(new_name);
         if result.is_ok() {
-            let senders: Vec<Sender<SessionCommand>> = {
-                self.sessions.read().unwrap().iter().map(|i| i.1.sender.clone()).collect()
-            };
-            for sender in senders.into_iter() {
+            for sender in self.get_all_senders().into_iter() {
                 sender.send(SessionCommand::Send {
                     buff: telling_name.clone()
                 }).await;
@@ -659,7 +720,7 @@ impl SessionManager {
         *self.ui_connection.lock().unwrap() = None;
         *self.session_counter.write().unwrap() = 0;
         self.loaded_contacts.write().unwrap().clear();
-        self.saved_msgs.lock().unwrap().clear();
+        self.saved_msgs.write().unwrap().clear();
     }
 
     pub fn is_identity_loaded(&self) -> bool {
@@ -703,7 +764,7 @@ impl SessionManager {
             ui_connection: Mutex::new(None),
             loaded_contacts: RwLock::new(HashMap::new()),
             last_loaded_msg_offsets: RwLock::new(HashMap::new()),
-            saved_msgs: Mutex::new(HashMap::new()),
+            saved_msgs: RwLock::new(HashMap::new()),
             not_seen: RwLock::new(Vec::new()),
             mdns_service: Mutex::new(None),
             listener_stop_signal: Mutex::new(None),

@@ -63,9 +63,9 @@
                 padding: 10px 50px;
             }
             .avatar {
-                width: 2em;
-                height: 2em;
-                font-size: 3em;
+                width: 7em;
+                height: 7em;
+                display: block;
                 margin: auto;
             }
             #identity h2 {
@@ -157,7 +157,7 @@
                 }
             } else {
                 let identity = document.getElementById("identity");
-                identity.appendChild(generateAvatar(identity_name));
+                identity.appendChild(generateSelfAvatar(Date.now()));
                 let h2 = document.createElement("h2");
                 h2.textContent = identity_name;
                 identity.appendChild(h2);

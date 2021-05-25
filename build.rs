@@ -1,5 +1,9 @@
 #[cfg(not(debug_assertions))]
-use std::{env, fs::{File, read_to_string, create_dir}, path::Path, io::{Write, ErrorKind}};
+use {
+    std::{env, fs::{File, read_to_string, create_dir}, path::Path, io::{Write, ErrorKind}},
+    yaml_rust::{YamlLoader, Yaml},
+    linked_hash_map::LinkedHashMap,
+};
 
 #[cfg(not(debug_assertions))]
 fn minify_content(content: &str, language: &str) -> Option<String> {
@@ -12,9 +16,14 @@ fn minify_content(content: &str, language: &str) -> Option<String> {
 }
 
 #[cfg(not(debug_assertions))]
+fn replace_fields(content: &mut String, fields: &LinkedHashMap<Yaml, Yaml>) {
+    fields.into_iter().for_each(|field| {
+        *content = content.replace(field.0.as_str().unwrap(), field.1.as_str().unwrap());
+    });
+}
+
+#[cfg(not(debug_assertions))]
 fn generate_web_files() {
-    use yaml_rust::YamlLoader;
-    
     let out_dir = env::var("OUT_DIR").unwrap();
     let out_dir = Path::new(&out_dir);
     let src_dir = Path::new("src/frontend");
@@ -26,7 +35,7 @@ fn generate_web_files() {
     }
 
     let config = &YamlLoader::load_from_str(&read_to_string("config.yml").unwrap()).unwrap()[0];
-    let css_values = config["css"].as_hash().unwrap();
+    let fields = config.as_hash().unwrap();
 
     [
         "login.html",
@@ -40,9 +49,7 @@ fn generate_web_files() {
         let extension = path.extension().unwrap().to_str().unwrap();
         let mut content = read_to_string(src_dir.join(path)).unwrap();
         if extension == "css" {
-            css_values.into_iter().for_each(|entry| {
-                content = content.replace(entry.0.as_str().unwrap(), entry.1.as_str().unwrap());
-            });
+            replace_fields(&mut content, fields);
         }
         if file_name == &"index.html" {
             content = content.replace("AIRA_VERSION", env!("CARGO_PKG_VERSION"));
@@ -51,6 +58,10 @@ fn generate_web_files() {
         let mut dst = File::create(out_dir.join(path)).unwrap();
         dst.write(minified_content.as_bytes()).unwrap();
     });
+
+    let mut text_avatar = read_to_string("src/frontend/imgs/text_avatar.svg").unwrap();
+    replace_fields(&mut text_avatar, fields);
+    File::create(out_dir.join("text_avatar.svg")).unwrap().write(text_avatar.as_bytes()).unwrap();
 }
 
 fn main() {

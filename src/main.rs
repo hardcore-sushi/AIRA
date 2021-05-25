@@ -9,6 +9,7 @@ mod constants;
 mod discovery;
 
 use std::{env, fs, io, net::SocketAddr, str::{FromStr, from_utf8}, sync::{Arc, RwLock}};
+use image::GenericImageView;
 use tokio::{net::TcpListener, runtime::Handle, sync::mpsc};
 use actix_web::{App, HttpMessage, HttpRequest, HttpResponse, HttpServer, http::{header, CookieBuilder}, web, web::Data};
 use actix_multipart::Multipart;
@@ -198,7 +199,7 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                 }
                                 "contact" => {
                                     let session_id: usize = args[1].parse().unwrap();
-                                    match session_manager.add_contact(session_id, msg[args[0].len()+args[1].len()+2..].to_string()) {
+                                    match session_manager.add_contact(session_id) {
                                         Ok(_) => {},
                                         Err(e) => print_error!(e)
                                     }
@@ -224,10 +225,10 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                         Err(e) => print_error!(e)
                                     }
                                 }
-                                "ask_name" => {
+                                "refresh_profile" => {
                                     let session_id: usize = args[1].parse().unwrap();
                                     session_manager.send_command(&session_id, SessionCommand::Send {
-                                        buff: protocol::ask_name()
+                                        buff: protocol::ask_profile_info()
                                     }).await;
                                 }
                                 "set_use_padding" => {
@@ -303,12 +304,86 @@ fn is_authenticated(req: &HttpRequest) -> bool {
     false
 }
 
+async fn handle_set_avatar(req: HttpRequest, mut payload: Multipart) -> HttpResponse {
+    if is_authenticated(&req) {
+        while let Ok(Some(mut field)) = payload.try_next().await {
+            let content_disposition = field.content_disposition().unwrap();
+            if let Some(name) = content_disposition.get_name() {
+                if name == "avatar" {
+                    let mut buffer = Vec::new();
+                    while let Some(Ok(chunk)) = field.next().await {
+                        buffer.extend(chunk);
+                    }
+                    match image::guess_format(&buffer) {
+                        Ok(format) => {
+                            match image::load_from_memory_with_format(&buffer, format) {
+                                Ok(image) => {
+                                    let (width, height) = image.dimensions();
+                                    let image = if width < height {
+                                        image.crop_imm(0, (height-width)/2, width, width)
+                                    } else if width > height {
+                                        image.crop_imm((width-height)/2, 0, height, height)
+                                    } else {
+                                        image
+                                    };
+                                    let mut avatar = Vec::new();
+                                    image.write_to(&mut avatar, format).unwrap();
+                                    let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
+                                    match global_vars.read().unwrap().session_manager.set_avatar(&avatar).await {
+                                        Ok(_) => {
+                                            return HttpResponse::Ok().finish();
+                                        }
+                                        Err(e) => {
+                                            print_error!(e);
+                                            return HttpResponse::InternalServerError().finish();
+                                        }
+                                    }
+                                }
+                                Err(e) => print_error!(e)
+                            }
+                        }
+                        Err(e) => print_error!(e)
+                    }
+                }
+            }
+        }
+    }
+    HttpResponse::BadRequest().finish()
+}
+
+fn reply_with_avatar(avatar: Option<Vec<u8>>, name: &str) -> HttpResponse {
+    match avatar {
+        Some(avatar) => HttpResponse::Ok().content_type("image/*").body(avatar),
+        None => {
+            #[cfg(not(debug_assertions))]
+            let svg = include_str!(concat!(env!("OUT_DIR"), "/text_avatar.svg"));
+            #[cfg(debug_assertions)]
+            let svg = replace_fields("src/frontend/imgs/text_avatar.svg");
+            HttpResponse::Ok().content_type("image/svg+xml").body(svg.replace("LETTER", &name.chars().nth(0).unwrap().to_string()))
+        }
+    }
+}
+
+fn handle_avatar(req: HttpRequest) -> HttpResponse {
+    let splits: Vec<&str> = req.path()[1..].split("/").collect();
+    if splits.len() == 2 {
+        if splits[1] == "self" {
+            return reply_with_avatar(Identity::get_identity_avatar().ok(), &Identity::get_identity_name().unwrap());
+        }
+    } else if splits.len() == 3 {
+        if let Ok(session_id) = splits[1].parse() {
+            let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
+            return reply_with_avatar(global_vars.read().unwrap().session_manager.get_avatar(&session_id), splits[2]);
+        }
+    }
+    HttpResponse::BadRequest().finish()
+}
+
 #[derive(Deserialize, Serialize, Debug)]
 struct FileInfo {
     uuid: String,
     file_name: String,
 }
-
 fn handle_load_file(req: HttpRequest, file_info: web::Query<FileInfo>) -> HttpResponse {
     if is_authenticated(&req) {
         match Uuid::from_str(&file_info.uuid) {
@@ -368,7 +443,9 @@ async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpRespo
                         loop {
                             chunk_buffer.extend(&pending_buffer);
                             pending_buffer.clear();
+                            println!("Calling next()");
                             while let Some(Ok(chunk)) = field.next().await {
+                                println!("Not None");
                                 if chunk_buffer.len()+chunk.len() <= constants::FILE_CHUNK_SIZE {
                                     chunk_buffer.extend(chunk);
                                 } else if chunk_buffer.len() == constants::FILE_CHUNK_SIZE {
@@ -381,6 +458,7 @@ async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpRespo
                                     break;
                                 }
                             }
+                            println!("May be None");
                             if !global_vars_read.session_manager.send_command(&session_id, SessionCommand::EncryptFileChunk{
                                 plain_text: chunk_buffer.clone()
                             }).await {
@@ -457,7 +535,7 @@ fn login(identity: Identity, global_vars: &Arc<RwLock<GlobalVars>>) -> HttpRespo
 }
 
 fn on_identity_loaded(identity: Identity, global_vars: &Arc<RwLock<GlobalVars>>) -> HttpResponse {
-    match Identity::clear_temporary_files() {
+    match Identity::clear_cache() {
         Ok(_) => {},
         Err(e) => print_error!(e)
     }
@@ -571,13 +649,13 @@ async fn handle_index(req: HttpRequest) -> HttpResponse {
 const JS_CONTENT_TYPE: &str = "text/javascript";
 
 #[cfg(debug_assertions)]
-fn replace_css(file_path: &str) -> String {
+fn replace_fields(file_path: &str) -> String {
     use yaml_rust::YamlLoader;
     let mut content = fs::read_to_string(file_path).unwrap();
     let config = &YamlLoader::load_from_str(&fs::read_to_string("config.yml").unwrap()).unwrap()[0];
-    let css_values = config["css"].as_hash().unwrap();
-    css_values.into_iter().for_each(|entry| {
-        content = content.replace(entry.0.as_str().unwrap(), entry.1.as_str().unwrap());
+    let fields = config.as_hash().unwrap();
+    fields.into_iter().for_each(|field| {
+        content = content.replace(field.0.as_str().unwrap(), field.1.as_str().unwrap());
     });
     content
 }
@@ -596,7 +674,7 @@ fn handle_static(req: HttpRequest) -> HttpResponse {
             }
             "index.css" => {
                 #[cfg(debug_assertions)]
-                return response_builder.body(replace_css("src/frontend/index.css"));
+                return response_builder.body(replace_fields("src/frontend/index.css"));
                 #[cfg(not(debug_assertions))]
                 return response_builder.body(include_str!(concat!(env!("OUT_DIR"), "/index.css")));
             }
@@ -655,7 +733,7 @@ fn handle_static(req: HttpRequest) -> HttpResponse {
                         }
                         "style.css" => {
                             #[cfg(debug_assertions)]
-                            return response_builder.body(replace_css("src/frontend/commons/style.css"));
+                            return response_builder.body(replace_fields("src/frontend/commons/style.css"));
                             #[cfg(not(debug_assertions))]
                             return response_builder.body(include_str!(concat!(env!("OUT_DIR"), "/commons/style.css")));
                         }
@@ -700,6 +778,8 @@ async fn start_http_server(global_vars: Arc<RwLock<GlobalVars>>) -> io::Result<(
             .route("/send_file", web::post().to(handle_send_file))
             .route("/send_large_file", web::post().to(handle_send_file))
             .route("/load_file", web::get().to(handle_load_file))
+            .route("/set_avatar", web::post().to(handle_set_avatar))
+            .route("/avatar/*", web::get().to(handle_avatar))
             .route("/static/.*", web::get().to(handle_static))
             .route("/logout", web::get().to(handle_logout))
         }

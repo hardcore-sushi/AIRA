@@ -8,6 +8,9 @@ let currentSessionId = -1;
 let sessionsData = new Map();
 let msgHistory = new Map();
 let pendingFilesTransfers = new Map();
+let avatarTimestamps = new Map([
+    ["self", Date.now()]
+]);
 
 function onClickSession(event) {
     let sessionId = event.currentTarget.getAttribute("data-sessionId");
@@ -75,7 +78,7 @@ document.getElementById("delete_conversation").onclick = function() {
     showPopup(mainDiv);
 };
 document.getElementById("add_contact").onclick = function() {
-    socket.send("contact "+currentSessionId+" "+sessionsData.get(currentSessionId).name);
+    socket.send("contact "+currentSessionId);
     sessionsData.get(currentSessionId).isContact = true;
     displayHeader();
     displaySessions();
@@ -234,8 +237,47 @@ msg_log.onscroll = function() {
 let profile_div = document.querySelector("#me>div");
 profile_div.onclick = function() {
     let mainDiv = document.createElement("div");
-    let avatar = generateAvatar(identityName);
-    mainDiv.appendChild(avatar);
+    mainDiv.id = "profile_info";
+    let avatarContainer = document.createElement("div");
+    avatarContainer.id = "avatarContainer";
+    let labelAvatar = document.createElement("label");
+    labelAvatar.setAttribute("for", "avatar_input");
+    let inputAvatar = document.createElement("input");
+    inputAvatar.type = "file";
+    inputAvatar.id = "avatar_input";
+    inputAvatar.onchange = function(event) {
+        let file = event.target.files[0];
+        if (file.size < 10000000) {
+            let formData = new FormData();
+            formData.append("avatar", file);
+            fetch("/set_avatar", {method: "POST", body: formData}).then(response => {
+                if (response.ok) {
+                    avatarTimestamps.set("self", Date.now());
+                    document.querySelector("#avatarContainer .avatar").src = "/avatar/self?"+avatarTimestamps.get("self");
+                    displayProfile();
+                    if (currentSessionId != -1) {
+                        displayHistory();
+                    }
+                } else {
+                    console.log(response);
+                }
+            });
+        } else {
+            let mainDiv = document.createElement("div");
+            mainDiv.appendChild(generatePopupWarningTitle());
+            let p = document.createElement("p");
+            p.textContent = "Avatar cannot be larger than 10MB.";
+            mainDiv.appendChild(p);
+            showPopup(mainDiv);
+        }
+    };
+    labelAvatar.appendChild(inputAvatar);
+    labelAvatar.appendChild(generateSelfAvatar(avatarTimestamps.get("self")));
+    let uploadP = document.createElement("p");
+    uploadP.textContent = "Upload";
+    labelAvatar.appendChild(uploadP);
+    avatarContainer.appendChild(labelAvatar);
+    mainDiv.appendChild(avatarContainer);
     let fingerprint = document.createElement("pre");
     fingerprint.id = "identity_fingerprint";
     fingerprint.textContent = beautifyFingerprint(identityFingerprint);
@@ -427,8 +469,8 @@ socket.onmessage = function(msg) {
         console.log("Message: "+msg.data);
         let args = msg.data.split(" ");
         switch (args[0]) {
-            case "disconnected":
-                onDisconnected(args[1]);
+            case "inc_file_transfer":
+                onIncFilesTransfer(args[1], parseInt(args[2]));
                 break;
             case "new_session":
                 onNewSession(args[1], args[2] === "true", args[3], args[4], msg.data.slice(args[0].length+args[1].length+args[2].length+args[3].length+args[4].length+5));
@@ -451,14 +493,14 @@ socket.onmessage = function(msg) {
             case "aborted":
                 onFilesTransferAborted(args[1]);
                 break;
-            case "inc_file_transfer":
-                onIncFilesTransfer(args[1], parseInt(args[2]));
-                break;
             case "load_msgs":
                 onMsgsLoad(args[1], msg.data.slice(args[0].length+args[1].length+2));
                 break;
             case "name_told":
                 onNameTold(args[1], msg.data.slice(args[0].length+args[1].length+2));
+                break;
+            case "avatar_set":
+                onAvatarSet(args[1]);
                 break;
             case "is_contact":
                 onIsContact(args[1], args[2] === "true", args[3], msg.data.slice(args[0].length+args[1].length+args[2].length+args[3].length+4));
@@ -474,6 +516,9 @@ socket.onmessage = function(msg) {
                 break;
             case "password_changed":
                 onPasswordChanged(args[1] === "true", args[2] === "true");
+                break;
+            case "disconnected":
+                onDisconnected(args[1]);
                 break;
             case "logout":
                 logout();
@@ -508,6 +553,14 @@ function onNameTold(sessionId, name) {
         }
     }
     displaySessions();
+}
+function onAvatarSet(sessionId) {
+    avatarTimestamps.set(sessionId, Date.now());
+    displaySessions();
+    if (sessionId === currentSessionId) {
+        displayHeader();
+        displayHistory(false);
+    }
 }
 function setNotSeen(strSessionIds) {
     let sessionIds = strSessionIds.split(' ');
@@ -787,7 +840,7 @@ function showSessionInfoPopup() {
     if (typeof session !== "undefined") {
         let mainDiv = document.createElement("div");
         mainDiv.id = "session_info";
-        mainDiv.appendChild(generateAvatar(session.name));
+        mainDiv.appendChild(generateAvatar(currentSessionId, session.name, avatarTimestamps.get(currentSessionId)));
         let nameDiv = document.createElement("div");
         nameDiv.classList.add("name");
         let h2 = document.createElement("h2");
@@ -796,7 +849,7 @@ function showSessionInfoPopup() {
         if (session.isOnline) {
             let button = document.createElement("button");
             button.onclick = function() {
-                socket.send("ask_name "+currentSessionId);
+                socket.send("refresh_profile "+currentSessionId);
             };
             nameDiv.appendChild(button);
         }
@@ -839,6 +892,7 @@ function addSession(sessionId, name, outgoing, fingerprint, ip, isContact, isVer
         "isOnline": isOnline,
     });
     msgHistory.set(sessionId, []);
+    avatarTimestamps.set(sessionId, Date.now());
     displaySessions();
 }
 function displaySessions() {
@@ -860,7 +914,7 @@ function logout() {
 }
 function displayProfile() {
     profile_div.innerHTML = "";
-    profile_div.appendChild(generateAvatar(identityName));
+    profile_div.appendChild(generateSelfAvatar(avatarTimestamps.get("self")));
     let p = document.createElement("p");
     p.textContent = identityName;
     profile_div.appendChild(p);
@@ -872,7 +926,7 @@ function displayHeader() {
     if (typeof session === "undefined") {
         chatHeader.style.display = "none";
     } else {
-        chatHeader.children[0].appendChild(generateAvatar(session.name));
+        chatHeader.children[0].appendChild(generateAvatar(currentSessionId, session.name, avatarTimestamps.get(currentSessionId)));
         chatHeader.children[0].appendChild(generateName(session.name));
         chatHeader.style.display = "flex";
         if (session.isContact) {
@@ -954,7 +1008,7 @@ function generateName(name) {
 function generateSession(sessionId, session) {
     let li = document.createElement("li");
     li.setAttribute("data-sessionId", sessionId);
-    li.appendChild(generateAvatar(session.name));
+    li.appendChild(generateAvatar(sessionId, session.name, avatarTimestamps.get(sessionId)));
     li.appendChild(generateName(session.name));
     if (session.isContact) {
         li.classList.add("is_contact");
@@ -973,16 +1027,23 @@ function generateSession(sessionId, session) {
     li.onclick = onClickSession;
     return li;
 }
-function generateMsgHeader(name) {
+function generateMsgHeader(name, sessionId) {
     let p = document.createElement("p");
     p.appendChild(document.createTextNode(name));
     let div = document.createElement("div");
     div.classList.add("header");
-    div.appendChild(generateAvatar(name));
+    let timestamp = avatarTimestamps.get(sessionId);
+    let avatar;
+    if (typeof sessionId === "undefined") {
+        avatar = generateSelfAvatar(timestamp);
+    } else {
+        avatar = generateAvatar(sessionId, name, timestamp);
+    }
+    div.appendChild(avatar);
     div.appendChild(p);
     return div;
 }
-function generateMessage(name, msg) {
+function generateMessage(name, sessionId, msg) {
     let p = document.createElement("p");
     p.appendChild(document.createTextNode(msg));
     let div = document.createElement("div");
@@ -990,12 +1051,12 @@ function generateMessage(name, msg) {
     div.appendChild(linkifyElement(p));
     let li = document.createElement("li");
     if (typeof name !== "undefined") {
-        li.appendChild(generateMsgHeader(name));
+        li.appendChild(generateMsgHeader(name, sessionId));
     }
     li.appendChild(div);
     return li;
 }
-function generateFile(name, outgoing, file_info) {
+function generateFile(name, sessionId, outgoing, file_info) {
     let div1 = document.createElement("div");
     div1.classList.add("file");
     div1.classList.add("content");
@@ -1017,7 +1078,7 @@ function generateFile(name, outgoing, file_info) {
     div1.appendChild(a);
     let li = document.createElement("li");
     if (typeof name !== "undefined") {
-        li.appendChild(generateMsgHeader(name));
+        li.appendChild(generateMsgHeader(name, sessionId));
     }
     li.appendChild(div1);
     return li;
@@ -1090,18 +1151,20 @@ function displayHistory(scrollToBottom = true) {
     let previousOutgoing = undefined;
     msgHistory.get(currentSessionId).forEach(entry => {
         let name = undefined;
+        let sessionId = undefined;
         if (previousOutgoing != entry[0]) {
             previousOutgoing = entry[0];
             if (entry[0]) { //outgoing msg
                 name = identityName;
             } else {
                 name = session.name;
+                sessionId = currentSessionId;
             }
         }
         if (entry[1]) { //is file
-            msg_log.appendChild(generateFile(name, entry[0], entry[2]));
+            msg_log.appendChild(generateFile(name, sessionId, entry[0], entry[2]));
         } else {
-            msg_log.appendChild(generateMessage(name, entry[2]));
+            msg_log.appendChild(generateMessage(name, sessionId, entry[2]));
         }
     });
     if (scrollToBottom) {
