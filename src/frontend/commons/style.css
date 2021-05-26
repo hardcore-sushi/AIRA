@@ -24,10 +24,97 @@ input[type="text"], input[type="password"] {
     width: 100%;
     margin: 0;
 }
+input[type="file"] {
+    display: none;
+}
+
+label {
+    cursor: pointer;
+}
 
 .avatar {
     margin-right: .5em;
     width: 1.5em;
     height: 1.5em;
     border-radius: 50%;
+}
+
+main.card {
+    max-width: 500px;
+    background-color: #2B2F31;
+    border-radius: 10px;
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    left: 0;
+    right: 0;
+    margin: auto;
+}
+
+.popup {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    left: 0;
+    right: 0;
+    margin: auto;
+    width: 40vw;
+    max-height: 90vh;
+    overflow: auto;
+    box-sizing: border-box;
+    padding: 20px 70px 10px;
+    background-color: #2B2F31;
+    border-radius: 10px;
+    font-size: 1.2em;
+}
+.popup:last-child::after {
+    content: "";
+    display: block;
+    height: 20px;
+    width: 100%;
+}
+.popup_background {
+    height: 100%;
+    width: 100%;
+    position: absolute;
+    background-color: rgba(0, 0, 0, .5);
+    z-index: 2;
+}
+.popup .close {
+    background-color: unset;
+    position: absolute;
+    right: 0;
+    top: 6px;
+}
+.popup .close::after {
+    content: url("/static/imgs/icons/cancel");
+    background-color: unset;
+}
+
+#avatarContainer {
+    display: flex;
+    justify-content: center;
+    padding-bottom: 1.5em;
+}
+#avatarContainer .avatar {
+    margin-right: unset;
+}
+#avatarContainer label:hover .avatar {
+    opacity: .4;
+}
+#avatarContainer label {
+    position: relative;
+}
+#avatarContainer .avatar + p {
+    display: none;
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    left: 0;
+    right: 0;
+    margin: 0;
+    text-align: center;
+}
+#avatarContainer label:hover p {
+    display: block;
 }

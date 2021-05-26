@@ -681,15 +681,13 @@ impl SessionManager {
     }
 
     #[allow(unused_must_use)]
-    pub async fn set_avatar(&self, avatar: &[u8]) -> Result<(), rusqlite::Error> {
-        Identity::set_identity_avatar(&avatar)?;
+    pub async fn send_avatar(&self, avatar: &[u8]) {
         let avatar_msg = protocol::avatar(&avatar);
         for sender in self.get_all_senders().into_iter() {
             sender.send(SessionCommand::Send {
                 buff: avatar_msg.clone()
             }).await;
         }
-        Ok(())
     }
 
     #[allow(unused_must_use)]
@@ -705,17 +703,15 @@ impl SessionManager {
     }
 
     #[allow(unused_must_use)]
-    pub async fn change_name(&self, new_name: String) -> Result<usize, rusqlite::Error> {
+    pub async fn change_name(&self, new_name: String) -> Result<(), rusqlite::Error> {
         let telling_name = protocol::name(&new_name);
-        let result = self.identity.write().unwrap().as_mut().unwrap().change_name(new_name);
-        if result.is_ok() {
-            for sender in self.get_all_senders().into_iter() {
-                sender.send(SessionCommand::Send {
-                    buff: telling_name.clone()
-                }).await;
-            }
+        self.identity.write().unwrap().as_mut().unwrap().change_name(new_name)?;
+        for sender in self.get_all_senders().into_iter() {
+            sender.send(SessionCommand::Send {
+                buff: telling_name.clone()
+            }).await;
         }
-        result
+        Ok(())
     }
 
     #[allow(unused_must_use)]

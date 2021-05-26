@@ -14,14 +14,6 @@
                 background-color: black;
             }
             main {
-                max-width: 500px;
-                background-color: #2B2F31;
-                border-radius: 10px;
-                position: absolute;
-                top: 20vh;
-                left: 0;
-                right: 0;
-                margin: auto;
                 padding-bottom: 20px;
             }
             h1, main>h3, #error_msg {
@@ -39,6 +31,9 @@
                 font-size: 1.2em;
                 font-weight: bold;
                 margin-bottom: 0;
+            }
+            .action_page>h2 {
+                margin-top: 0;
             }
             input[type="text"], input[type="password"] {
                 margin-bottom: 20px;
@@ -65,13 +60,11 @@
             .avatar {
                 width: 7em;
                 height: 7em;
-                display: block;
-                margin: auto;
             }
             #identity h2 {
                 text-align: center;
             }
-            p {
+            #error_msg {
                 color: red;
             }
             label.checkbox {
@@ -110,24 +103,41 @@
             label.checkbox input:checked ~ .checkmark:after {
                 display: block;
             }
+            #avatarContainer .avatar.unset {
+                border: 2px solid var(--accent);
+            }
+            #identity .avatar {
+                display: block;
+                margin: auto;
+            }
         </style>
     </head>
     <body>
-        <main>
+        <main class="card">
             <h1>AIRA</h1>
             <h3>Local network secure P2P communications</h3>
             <p id="error_msg">ERROR_MSG</p>
             <div id="login_page" class="action_page">
                 <h2>Login:</h2>
                 <form id="login_form" method="POST" action="/login">
-                    <div id="identity"></div>
+                    <div id="identity">
+                        <img class="avatar" src="/avatar/self"/>
+                        <h2 id="identityName"></h2>
+                    </div>
                     <input name="password" type="password" placeholder="Password">
                     <button type="submit">Login</button>
                 </form>
             </div>
             <div id="create_page" class="action_page">
-                <h2>Create New Identity:</h2>
+                <h2>Create a new identity:</h2>
                 <form method="POST">
+                    <div id="avatarContainer">
+                        <label>
+                            <input type="file" accept="image/*">
+                            <img class="avatar unset" src="/static/imgs/icons/profile/ACCENT_COLOR"/>
+                            <p>Upload</p>
+                        </label>
+                    </div>
                     <input type="text" name="name" placeholder="Name" required>
                     <label class="checkbox">
                         <input id="enable_password" type="checkbox">
@@ -142,12 +152,20 @@
         </main>
         <script src="/static/commons/script.js"></script>
         <script>
-            let identity_name = IDENTITY_NAME;
-            if (identity_name == null) {
+            let identityName = IDENTITY_NAME;
+            if (identityName == null) {
                 document.getElementById("login_page").style.display = "none";
+                document.querySelector("#avatarContainer input").onchange = function(event) {
+                    uploadAvatar(event, function() {
+                        let img = document.querySelector("#avatarContainer .avatar");
+                        img.src = "/avatar/self?"+Date.now();
+                        img.classList.remove("unset");
+                    });
+                };
+                let passwordInputs = document.querySelectorAll("#create_page input[type=\"password\"]");
                 let enable_password = document.getElementById("enable_password");
                 enable_password.onchange = function() {
-                    document.querySelectorAll("#create_page input[type=\"password\"]").forEach(function(i) {
+                    passwordInputs.forEach(function(i) {
                         if (enable_password.checked) {
                             i.style.display = "block";
                         } else {
@@ -156,11 +174,8 @@
                     });
                 }
             } else {
-                let identity = document.getElementById("identity");
-                identity.appendChild(generateSelfAvatar(Date.now()));
-                let h2 = document.createElement("h2");
-                h2.textContent = identity_name;
-                identity.appendChild(h2);
+                let h2Name = document.getElementById("identityName");
+                h2Name.textContent = identityName;
                 document.getElementById("create_page").style.display = "none";
             }
         </script>

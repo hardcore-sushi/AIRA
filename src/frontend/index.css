@@ -48,9 +48,6 @@ button:hover::after {
 .classic_button:hover {
     background-color: var(--accent);
 }
-input[type="file"] {
-    display: none;
-}
 .file_picker {
     display: flex;
     align-items: center;
@@ -60,56 +57,11 @@ input[type="file"] {
     content: url("/static/imgs/icons/attach/ACCENT_COLOR");
     width: 2em;
 }
-.popup {
-    position: absolute;
-    top: 50%;
-    transform: translateY(-50%);
-    left: 0;
-    right: 0;
-    margin: auto;
-    width: 40vw;
-    max-height: 90vh;
-    overflow: auto;
-    box-sizing: border-box;
-    padding: 20px 70px 10px;
-    background-color: #2B2F31;
-    border-radius: 10px;
-    font-size: 1.2em;
-}
-.popup:last-child::after {
-    content: "";
-    display: block;
-    height: 20px;
-    width: 100%;
-}
-.popup_background {
-    height: 100%;
-    width: 100%;
-    position: absolute;
-    background-color: rgba(0, 0, 0, .5);
-    z-index: 2;
-}
-.popup .close {
-    background-color: unset;
-    position: absolute;
-    right: 0;
-    top: 6px;
-}
-.popup .close:hover {
-    background-color: unset;
-}
-.popup .close::after {
-    content: url("/static/imgs/icons/cancel");
-    background-color: unset;
-}
 .popup h2.warning::before {
     content: url("/static/imgs/icons/warning/ACCENT_COLOR");
     width: 9%;
     display: inline-block;
     vertical-align: middle;
-}
-label {
-    cursor: pointer;
 }
 .switch_preference {
     display: flex;
@@ -166,32 +118,9 @@ label {
 }
 #avatarContainer {
     position: relative;
-    padding-bottom: 1.5em;
-    display: flex;
-    justify-content: center;
 }
 #avatarContainer .avatar {
     font-size: 4em;
-    margin-right: unset;
-}
-#avatarContainer label:hover .avatar {
-    opacity: .4;
-}
-#avatarContainer>label {
-    position: relative;
-}
-#avatarContainer .avatar + p {
-    display: none;
-    position: absolute;
-    top: 50%;
-    transform: translateY(-50%);
-    left: 0;
-    right: 0;
-    margin: auto;
-    text-align: center;
-}
-#avatarContainer label:hover p {
-    display: block;
 }
 #removeAvatar {
     position: absolute;

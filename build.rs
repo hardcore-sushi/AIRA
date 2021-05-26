@@ -46,9 +46,11 @@ fn generate_web_files() {
         "commons/script.js",
     ].iter().for_each(|file_name| {
         let path = Path::new(file_name);
+        let src_path = src_dir.join(path);
+        println!("cargo:rerun-if-changed={}", src_path.to_str().unwrap());
         let extension = path.extension().unwrap().to_str().unwrap();
-        let mut content = read_to_string(src_dir.join(path)).unwrap();
-        if extension == "css" {
+        let mut content = read_to_string(src_path).unwrap();
+        if extension == "css" || file_name == &"login.html" {
             replace_fields(&mut content, fields);
         }
         if file_name == &"index.html" {
@@ -59,7 +61,9 @@ fn generate_web_files() {
         dst.write(minified_content.as_bytes()).unwrap();
     });
 
-    let mut text_avatar = read_to_string("src/frontend/imgs/text_avatar.svg").unwrap();
+    const TEXT_AVATAR_PATH: &str = "src/frontend/imgs/text_avatar.svg";
+    let mut text_avatar = read_to_string(TEXT_AVATAR_PATH).unwrap();
+    println!("cargo:rerun-if-changed={}", TEXT_AVATAR_PATH);
     replace_fields(&mut text_avatar, fields);
     File::create(out_dir.join("text_avatar.svg")).unwrap().write(text_avatar.as_bytes()).unwrap();
 }
