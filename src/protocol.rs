@@ -9,11 +9,12 @@ impl Headers {
     pub const ASK_PROFILE_INFO: u8 = 0x02;
     pub const NAME: u8 = 0x03;
     pub const AVATAR: u8 = 0x04;
-    pub const ASK_LARGE_FILES: u8 = 0x05;
-    pub const ACCEPT_LARGE_FILES: u8 = 0x06;
-    pub const LARGE_FILE_CHUNK: u8 = 0x07;
-    pub const ACK_CHUNK: u8 = 0x08;
-    pub const ABORT_FILES_TRANSFER: u8 = 0x09;
+    pub const REMOVE_AVATAR: u8 = 0x05;
+    pub const ASK_LARGE_FILES: u8 = 0x06;
+    pub const ACCEPT_LARGE_FILES: u8 = 0x07;
+    pub const LARGE_FILE_CHUNK: u8 = 0x08;
+    pub const ACK_CHUNK: u8 = 0x09;
+    pub const ABORT_FILES_TRANSFER: u8 = 0x0a;
 }
 
 pub fn new_message(message: String) -> Vec<u8> {
@@ -84,4 +85,8 @@ pub fn parse_ask_files(buffer: &[u8]) -> Option<Vec<(u64, String)>> {
 
 pub fn avatar(avatar: &[u8]) -> Vec<u8> {
     [&[Headers::AVATAR], avatar].concat()
+}
+
+pub fn remove_avatar() -> Vec<u8> {
+    vec![Headers::REMOVE_AVATAR]
 }

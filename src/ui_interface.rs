@@ -112,8 +112,11 @@ mod ui_messages {
     pub fn on_name_told(session_id: &usize, name: &str) -> Message {
         Message::from(format!("name_told {} {}", session_id, name))
     }
-    pub fn on_avatar_set(session_id: &usize) -> Message {
-        simple_event("avatar_set", session_id)
+    pub fn on_avatar_changed(session_id: Option<&usize>) -> Message {
+        match session_id {
+            Some(session_id) => simple_event("avatar_changed", session_id),
+            None => Message::from("avatar_changed self")
+        }
     }
     pub fn set_as_contact(session_id: usize, name: &str, verified: bool, fingerprint: &str) -> Message {
         Message::from(format!("is_contact {} {} {} {}", session_id, verified, fingerprint, name))
@@ -182,8 +185,8 @@ impl UiConnection {
     pub fn on_name_told(&mut self, session_id: &usize, name: &str) {
         self.write_message(ui_messages::on_name_told(session_id, name));
     }
-    pub fn on_avatar_set(&mut self, session_id: &usize) {
-        self.write_message(ui_messages::on_avatar_set(session_id));
+    pub fn on_avatar_changed(&mut self, session_id: Option<&usize>) {
+        self.write_message(ui_messages::on_avatar_changed(session_id));
     }
 
     pub fn inc_files_transfer(&mut self, session_id: &usize, chunk_size: u64) {

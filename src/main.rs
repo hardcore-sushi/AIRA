@@ -231,6 +231,12 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                         buff: protocol::ask_profile_info()
                                     }).await;
                                 }
+                                "remove_avatar" => {
+                                    match session_manager.remove_avatar().await {
+                                        Ok(_) => ui_connection.on_avatar_changed(None),
+                                        Err(e) => print_error!(e)
+                                    }
+                                }
                                 "set_use_padding" => {
                                     let use_padding: bool = args[1].parse().unwrap();
                                     if let Err(e) = session_manager.identity.write().unwrap().as_mut().unwrap().set_use_padding(use_padding) {
@@ -240,9 +246,7 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                 "change_name" => {
                                     let new_name = &msg[args[0].len()+1..];
                                     match session_manager.change_name(new_name.to_string()).await {
-                                        Ok(_) => {
-                                            ui_connection.set_name(new_name)
-                                        }
+                                        Ok(_) => ui_connection.set_name(new_name),
                                         Err(e) => print_error!(e)
                                     };
                                 }

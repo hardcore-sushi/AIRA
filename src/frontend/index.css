@@ -165,6 +165,8 @@ label {
   transform: translateX(26px);
 }
 #avatarContainer {
+    position: relative;
+    padding-bottom: 1.5em;
     display: flex;
     justify-content: center;
 }
@@ -191,6 +193,14 @@ label {
 #avatarContainer label:hover p {
     display: block;
 }
+#removeAvatar {
+    position: absolute;
+    bottom: 0;
+    cursor: pointer;
+}
+#removeAvatar:hover {
+    color: var(--accent);
+}
 #profile_info section {
     display: block;
     margin-bottom: 20px;
@@ -199,11 +209,11 @@ label {
 #profile_info section:first-of-type {
     border-top: unset;
 }
+#profile_info section:first-of-type h3 {
+    margin: 0;
+}
 #profile_info input {
     margin: 10px;
-}
-#profile_info span {
-    font-weight: bold;
 }
 #profile_info>div>div p {
     font-weight: normal;
@@ -274,10 +284,6 @@ label {
 }
 #me>div:hover p {
     color: var(--accent);
-}
-#identity_fingerprint {
-    text-align: center;
-    margin-bottom: 0;
 }
 #left_panel ul:last-of-type, #msg_log {
     flex-grow: 1;

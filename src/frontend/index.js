@@ -244,6 +244,7 @@ profile_div.onclick = function() {
     labelAvatar.setAttribute("for", "avatar_input");
     let inputAvatar = document.createElement("input");
     inputAvatar.type = "file";
+    inputAvatar.accept = "image/*";
     inputAvatar.id = "avatar_input";
     inputAvatar.onchange = function(event) {
         let file = event.target.files[0];
@@ -253,11 +254,7 @@ profile_div.onclick = function() {
             fetch("/set_avatar", {method: "POST", body: formData}).then(response => {
                 if (response.ok) {
                     avatarTimestamps.set("self", Date.now());
-                    document.querySelector("#avatarContainer .avatar").src = "/avatar/self?"+avatarTimestamps.get("self");
-                    displayProfile();
-                    if (currentSessionId != -1) {
-                        displayHistory();
-                    }
+                    refreshSelfAvatar();
                 } else {
                     console.log(response);
                 }
@@ -277,11 +274,14 @@ profile_div.onclick = function() {
     uploadP.textContent = "Upload";
     labelAvatar.appendChild(uploadP);
     avatarContainer.appendChild(labelAvatar);
+    let removeAvatar = document.createElement("span");
+    removeAvatar.id = "removeAvatar";
+    removeAvatar.textContent = "Remove";
+    removeAvatar.onclick = function() {
+        socket.send("remove_avatar");
+    };
+    avatarContainer.appendChild(removeAvatar);
     mainDiv.appendChild(avatarContainer);
-    let fingerprint = document.createElement("pre");
-    fingerprint.id = "identity_fingerprint";
-    fingerprint.textContent = beautifyFingerprint(identityFingerprint);
-    mainDiv.appendChild(fingerprint);
     let sectionName = document.createElement("section");
     let titleName = document.createElement("h3");
     titleName.textContent = "Name:";
@@ -299,6 +299,14 @@ profile_div.onclick = function() {
     };
     sectionName.appendChild(saveNameButton);
     mainDiv.appendChild(sectionName);
+    let sectionFingerprint = document.createElement("section");
+    let titleFingerprint = document.createElement("h3");
+    titleFingerprint.textContent = "Your fingerprint:";
+    sectionFingerprint.appendChild(titleFingerprint);
+    let fingerprint = document.createElement("pre");
+    fingerprint.textContent = beautifyFingerprint(identityFingerprint);
+    sectionFingerprint.appendChild(fingerprint);
+    mainDiv.appendChild(sectionFingerprint);
     let sectionPadding = document.createElement("section");
     sectionPadding.appendChild(generateSwitchPreference("Use PSEC padding", "PSEC padding obfuscates the length of your messages but uses more network bandwidth.", usePadding, function(checked) {
         socket.send("set_use_padding "+checked);
@@ -499,8 +507,8 @@ socket.onmessage = function(msg) {
             case "name_told":
                 onNameTold(args[1], msg.data.slice(args[0].length+args[1].length+2));
                 break;
-            case "avatar_set":
-                onAvatarSet(args[1]);
+            case "avatar_changed":
+                onAvatarChanged(args[1]);
                 break;
             case "is_contact":
                 onIsContact(args[1], args[2] === "true", args[3], msg.data.slice(args[0].length+args[1].length+args[2].length+args[3].length+4));
@@ -554,12 +562,15 @@ function onNameTold(sessionId, name) {
     }
     displaySessions();
 }
-function onAvatarSet(sessionId) {
-    avatarTimestamps.set(sessionId, Date.now());
+function onAvatarChanged(sessionIdOrSelf) {
+    avatarTimestamps.set(sessionIdOrSelf, Date.now());
     displaySessions();
-    if (sessionId === currentSessionId) {
+    if (sessionIdOrSelf === currentSessionId) {
         displayHeader();
         displayHistory(false);
+        refreshAvatar("#session_info .avatar", sessionIdOrSelf);
+    } else if (sessionIdOrSelf === "self") {
+        refreshSelfAvatar();
     }
 }
 function setNotSeen(strSessionIds) {
@@ -818,6 +829,23 @@ function sendNextLargeFile(sessionId) {
         }
     });
 }
+function refreshAvatar(selector, sessionId) {
+    let avatar = document.querySelector(selector);
+    if (typeof avatar !== "undefined") {
+        if (typeof sessionId === "undefined") {
+            avatar.src = "/avatar/self?"+avatarTimestamps.get("self");
+        } else {
+            avatar.src = "/avatar/"+sessionId+"/"+sessionsData.get(sessionId).name+"?"+avatarTimestamps.get(sessionId);
+        }
+    }
+}
+function refreshSelfAvatar() {
+    refreshAvatar("#avatarContainer .avatar");
+    displayProfile();
+    if (currentSessionId != -1) {
+        displayHistory(false);
+    }
+}
 function beautifyFingerprint(f) {
     for (let i=4; i<f.length; i+=5) {
         f = f.slice(0, i)+" "+f.slice(i);
@@ -1032,12 +1060,11 @@ function generateMsgHeader(name, sessionId) {
     p.appendChild(document.createTextNode(name));
     let div = document.createElement("div");
     div.classList.add("header");
-    let timestamp = avatarTimestamps.get(sessionId);
     let avatar;
     if (typeof sessionId === "undefined") {
-        avatar = generateSelfAvatar(timestamp);
+        avatar = generateSelfAvatar(avatarTimestamps.get("self"));
     } else {
-        avatar = generateAvatar(sessionId, name, timestamp);
+        avatar = generateAvatar(sessionId, name, avatarTimestamps.get(sessionId));
     }
     div.appendChild(avatar);
     div.appendChild(p);

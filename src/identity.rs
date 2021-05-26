@@ -113,9 +113,15 @@ impl Identity {
         db.execute(&format!("UPDATE {} SET name=?1 WHERE uuid=?2", CONTACTS_TABLE), [encrypted_name.as_slice(), uuid.as_bytes()])
     }
 
-    pub fn set_contact_avatar(&self, contact_uuid: &Uuid, avatar_uuid: &Uuid) -> Result<usize, rusqlite::Error> {
+    pub fn set_contact_avatar(&self, contact_uuid: &Uuid, avatar_uuid: Option<&Uuid>) -> Result<usize, rusqlite::Error> {
         let db = Connection::open(get_database_path())?;
-        db.execute(&format!("UPDATE {} SET avatar=?1 WHERE uuid=?2", CONTACTS_TABLE), params![&avatar_uuid.as_bytes()[..], &contact_uuid.as_bytes()[..]])
+        match avatar_uuid {
+            Some(avatar_uuid) => db.execute(&format!("UPDATE {} SET avatar=?1 WHERE uuid=?2", CONTACTS_TABLE), params![&avatar_uuid.as_bytes()[..], &contact_uuid.as_bytes()[..]]),
+            None => {
+                db.execute(&format!("DELETE FROM {} WHERE uuid=(SELECT avatar FROM {} WHERE uuid=?)", AVATARS_TABLE, CONTACTS_TABLE), params![&contact_uuid.as_bytes()[..]])?;
+                db.execute(&format!("UPDATE {} SET avatar=NULL WHERE uuid=?", CONTACTS_TABLE), params![&contact_uuid.as_bytes()[..]])
+            }
+        }
     }
 
     pub fn set_contact_seen(&self, uuid: &Uuid, seen: bool) -> Result<usize, rusqlite::Error> {
@@ -471,6 +477,11 @@ impl Identity {
     pub fn set_identity_avatar(avatar: &[u8]) -> Result<usize, rusqlite::Error> {
         let db = KeyValueTable::new(&get_database_path(), MAIN_TABLE)?;
         db.upsert(DBKeys::AVATAR, avatar)
+    }
+
+    pub fn remove_identity_avatar() -> Result<usize, rusqlite::Error> {
+        let db = KeyValueTable::new(&get_database_path(), MAIN_TABLE)?;
+        db.del(DBKeys::AVATAR)
     }
 
     pub fn get_identity_avatar() -> Result<Vec<u8>, rusqlite::Error> {

@@ -136,6 +136,21 @@ impl SessionManager {
         self.not_seen.write().unwrap().retain(|x| x != session_id);
     }
 
+    fn set_avatar_uuid(&self, session_id: &usize, avatar_uuid: Option<Uuid>) {
+        let mut loaded_contacts = self.loaded_contacts.write().unwrap();
+        if let Some(contact) = loaded_contacts.get_mut(session_id) {
+            contact.avatar = avatar_uuid;
+            if let Err(e) = self.identity.read().unwrap().as_ref().unwrap().set_contact_avatar(&contact.uuid, avatar_uuid.as_ref()) {
+                print_error!(e);
+            }
+        } else {
+            self.sessions.write().unwrap().get_mut(session_id).unwrap().avatar = avatar_uuid;
+        }
+        self.with_ui_connection(|ui_connection| {
+            ui_connection.on_avatar_changed(Some(session_id));
+        });
+    }
+
     async fn send_msg(&self, session_id: usize, session_write: &mut SessionWriteHalf, buff: &[u8], is_sending: &mut bool, file_ack_sender: &mut Option<Sender<bool>>) -> Result<(), PsecError> {
         self.encrypt_and_send(session_write, &buff).await?;
         if buff[0] == protocol::Headers::ACCEPT_LARGE_FILES {
@@ -342,23 +357,8 @@ impl SessionManager {
                                         match image::load_from_memory(&buffer[1..]) {
                                             Ok(image) => {
                                                 drop(image);
-                                                let identity_opt = self.identity.read().unwrap();
-                                                let identity = identity_opt.as_ref().unwrap();
-                                                match identity.store_avatar(&buffer[1..]) {
-                                                    Ok(avatar_uuid) => {
-                                                        let mut loaded_contacts = self.loaded_contacts.write().unwrap();
-                                                        if let Some(contact) = loaded_contacts.get_mut(&session_id) {
-                                                            contact.avatar = Some(avatar_uuid);
-                                                            if let Err(e) = identity.set_contact_avatar(&contact.uuid, &avatar_uuid) {
-                                                                print_error!(e);
-                                                            }
-                                                        } else {
-                                                            self.sessions.write().unwrap().get_mut(&session_id).unwrap().avatar = Some(avatar_uuid);
-                                                        }
-                                                        self.with_ui_connection(|ui_connection| {
-                                                            ui_connection.on_avatar_set(&session_id);
-                                                        });
-                                                    }
+                                                match self.identity.read().unwrap().as_ref().unwrap().store_avatar(&buffer[1..]) {
+                                                    Ok(avatar_uuid) => self.set_avatar_uuid(&session_id, Some(avatar_uuid)),
                                                     Err(e) => print_error!(e)
                                                 }
                                             }
@@ -366,6 +366,7 @@ impl SessionManager {
                                         }
                                     }
                                 }
+                                protocol::Headers::REMOVE_AVATAR => self.set_avatar_uuid(&session_id, None),
                                 _ => {
                                     let header = buffer[0];
                                     let buffer = match header {
@@ -683,6 +684,18 @@ impl SessionManager {
     pub async fn set_avatar(&self, avatar: &[u8]) -> Result<(), rusqlite::Error> {
         Identity::set_identity_avatar(&avatar)?;
         let avatar_msg = protocol::avatar(&avatar);
+        for sender in self.get_all_senders().into_iter() {
+            sender.send(SessionCommand::Send {
+                buff: avatar_msg.clone()
+            }).await;
+        }
+        Ok(())
+    }
+
+    #[allow(unused_must_use)]
+    pub async fn remove_avatar(&self) -> Result<(), rusqlite::Error> {
+        Identity::remove_identity_avatar()?;
+        let avatar_msg = protocol::remove_avatar();
         for sender in self.get_all_senders().into_iter() {
             sender.send(SessionCommand::Send {
                 buff: avatar_msg.clone()

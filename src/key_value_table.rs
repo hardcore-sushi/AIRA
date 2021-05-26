@@ -22,9 +22,9 @@ impl<'a> KeyValueTable<'a> {
             None => Err(rusqlite::Error::QueryReturnedNoRows)
         }
     }
-    /*pub fn del(&self, key: &str) -> Result<usize, Error> {
-        self.db.execute(&format!("DELETE FROM {} WHERE key=\"{}\"", self.table_name, key), NO_PARAMS)
-    }*/
+    pub fn del(&self, key: &str) -> Result<usize, Error> {
+        self.db.execute(&format!("DELETE FROM {} WHERE key=\"{}\"", self.table_name, key), [])
+    }
     pub fn update(&self, key: &str, value: &[u8]) -> Result<usize, Error> {
         self.db.execute(&format!("UPDATE {} SET value=? WHERE key=\"{}\"", self.table_name, key), params![value])
     }
