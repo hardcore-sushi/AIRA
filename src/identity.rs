@@ -184,11 +184,21 @@ impl Identity {
         None
     }
 
-    #[allow(unused_must_use)]
     pub fn clear_cache() -> Result<(), rusqlite::Error> {
         let db = Connection::open(get_database_path())?;
-        db.execute(&format!("DELETE FROM {} WHERE contact_uuid IS NULL", FILES_TABLE), []);
-        db.execute(&format!("DELETE FROM {} WHERE uuid NOT IN (SELECT avatar FROM {})", AVATARS_TABLE, CONTACTS_TABLE), []);
+        let mut stmt = db.prepare(&format!("SELECT name FROM sqlite_master WHERE type='table' AND name='{}'", CONTACTS_TABLE))?;
+        let mut rows = stmt.query([])?;
+        let contact_table_exists = rows.next()?.is_some();
+        if contact_table_exists {
+            #[allow(unused_must_use)]
+            {
+                db.execute(&format!("DELETE FROM {} WHERE contact_uuid IS NULL", FILES_TABLE), []);
+                db.execute(&format!("DELETE FROM {} WHERE uuid NOT IN (SELECT avatar FROM {})", AVATARS_TABLE, CONTACTS_TABLE), []);
+            }
+        } else {
+            db.execute(&format!("DROP TABLE IF EXISTS {}", FILES_TABLE), [])?;
+            db.execute(&format!("DROP TABLE IF EXISTS {}", AVATARS_TABLE), [])?;
+        }
         Ok(())
     }
 
