@@ -370,7 +370,7 @@ fn reply_with_avatar(avatar: Option<Vec<u8>>, name: Option<&str>) -> HttpRespons
                 let svg = include_str!(concat!(env!("OUT_DIR"), "/text_avatar.svg"));
                 #[cfg(debug_assertions)]
                 let svg = replace_fields("src/frontend/imgs/text_avatar.svg");
-                HttpResponse::Ok().content_type("image/svg+xml").body(svg.replace("LETTER", &name.chars().nth(0).unwrap().to_string()))
+                HttpResponse::Ok().content_type("image/svg+xml").body(svg.replace("LETTER", &name.chars().nth(0).unwrap_or('?').to_string()))
             }
             None => HttpResponse::InternalServerError().finish()
         }
@@ -383,7 +383,7 @@ fn handle_avatar(req: HttpRequest) -> HttpResponse {
         if splits[1] == "self" {
             return reply_with_avatar(Identity::get_identity_avatar().ok(), Identity::get_identity_name().ok().as_deref());
         }
-    } else if splits.len() == 3 {
+    } else if splits.len() == 3 && is_authenticated(&req) {
         if let Ok(session_id) = splits[1].parse() {
             let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
             return reply_with_avatar(global_vars.read().unwrap().session_manager.get_avatar(&session_id), Some(splits[2]));

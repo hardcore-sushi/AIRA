@@ -815,7 +815,7 @@ function sendNextLargeFile(sessionId) {
 }
 function refreshAvatar(selector, sessionId) {
     let avatar = document.querySelector(selector);
-    if (typeof avatar !== "undefined") {
+    if (avatar !== null) {
         if (typeof sessionId === "undefined") {
             avatar.src = "/avatar/self?"+avatarTimestamps.get("self");
         } else {
