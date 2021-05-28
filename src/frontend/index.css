@@ -59,7 +59,7 @@ button:hover::after {
 }
 .popup h2.warning::before {
     content: url("/static/imgs/icons/warning/ACCENT_COLOR");
-    width: 9%;
+    width: 2em;
     display: inline-block;
     vertical-align: middle;
 }
