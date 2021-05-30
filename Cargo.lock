@@ -363,7 +363,7 @@ dependencies = [
 
 [[package]]
 name = "aira"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "actix-multipart",
  "actix-web",
@@ -403,9 +403,9 @@ dependencies = [
 
 [[package]]
 name = "async-psec"
-version = "0.2.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31dcd9dc064b59d84e03e9c42c97ca8bba139ff04a874afc0e93944d7f62e235"
+checksum = "ecfe23adc9e2e5d9dd329ad27dd33d49a3e3a83f88ba8363f8b8438e294075d4"
 dependencies = [
  "aes-gcm",
  "async-trait",
