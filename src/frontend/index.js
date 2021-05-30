@@ -188,10 +188,10 @@ document.getElementById("attach_file").onchange = function(event) {
             mainDiv.appendChild(p);
             showPopup(mainDiv);
         } else {
-            let fileTransfers = [];
+            let filesTransfer = [];
             let fileInfo = "";
             for (let i=0; i<files.length; ++i) {
-                fileTransfers.push({
+                filesTransfer.push({
                     "file": files[i],
                     "name": files[i].name,
                     "size": files[i].size,
@@ -201,7 +201,7 @@ document.getElementById("attach_file").onchange = function(event) {
                 fileInfo += ' '+files[i].size+' '+b64EncodeUnicode(files[i].name);
             };
             pendingFilesTransfers.set(currentSessionId, {
-                "files": fileTransfers,
+                "files": filesTransfer,
                 "index": 0,
                 "state": "waiting",
             });
@@ -1091,6 +1091,7 @@ function displayChatBottom(speed = undefined) {
             fileInfo.innerHTML = "";
             let filesTransfer = pendingFilesTransfers.get(currentSessionId);
             let file = filesTransfer.files[filesTransfer.index];
+            fileInfo.appendChild(document.createTextNode(filesTransfer.index+1+"/"+filesTransfer.files.length+": "));
             generateFileInfo(file.name, file.size, fileInfo);
             let fileProgress = document.getElementById("file_progress");
             fileProgress.style.display = "none"; //hide by default
