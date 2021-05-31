@@ -13,10 +13,10 @@ async-psec = { version = "0.3", features = ["split"] }
 lazy_static = "1.4"
 socket2 = "0.4"
 rusqlite = { version = "0.25.1", features = ["bundled"] }
-ed25519-dalek = "1" #for singing
+ed25519-dalek = "1" #for singatures
 sha2 = "0.9"
 aes-gcm = "0.9"
-aes-gcm-siv = "0.10" #Database
+aes-gcm-siv = "0.10" #database encryption
 hkdf = "0.11"
 hex = "0.4"
 actix-web = "3"

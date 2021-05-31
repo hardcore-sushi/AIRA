@@ -120,7 +120,7 @@ button:hover::after {
     position: relative;
 }
 #avatarContainer .avatar {
-    font-size: 4em;
+    font-size: 2.5em;
 }
 #removeAvatar {
     position: absolute;
@@ -149,8 +149,7 @@ button:hover::after {
     font-size: 0.9em;
 }
 #session_info .avatar {
-    width: 6em;
-    height: 6em;
+    font-size: 2.5em;
     display: block;
     margin: auto;
 }
@@ -198,7 +197,6 @@ button:hover::after {
     padding: 10px;
     display: flex;
     align-items: center;
-    font-size: 1.7em;
     cursor: pointer;
 }
 #me>div {
@@ -207,12 +205,16 @@ button:hover::after {
     flex-grow: 1;
 }
 #me p {
+    font-size: 1.7em;
     margin: 0;
     font-weight: bold;
     display: inline;
 }
 #me>div:hover p {
     color: var(--accent);
+}
+#me .avatar {
+    font-size: 1.2em;
 }
 #left_panel ul:last-of-type, #msg_log {
     flex-grow: 1;
@@ -235,8 +237,7 @@ button:hover::after {
     flex-grow: 1;
 }
 #left_panel ul li .avatar {
-    width: 2em;
-    height: 2em;
+    font-size: .9em;
 }
 #left_panel ul li:hover, #left_panel ul li.current {
     background-color: #333940;
@@ -295,7 +296,6 @@ button:hover::after {
     flex-direction: row;
     align-items: center;
     padding: 20px 20px;
-    font-size: 1.5em;
 }
 #chat_header>div {
     display: flex;
@@ -307,6 +307,7 @@ button:hover::after {
     color: var(--accent);
 }
 #chat_header>div>p { /*name*/
+    font-size: 1.5em;
     font-weight: bold;
     margin: 0;
 }
@@ -406,11 +407,12 @@ button:hover::after {
     margin-bottom: 0;
 }
 #msg_log {
-    font-size: 1.1em;
     overflow-y: scroll;
-    white-space: pre;
+    white-space: pre-wrap;
 }
 #msg_log p {
+    font-size: 1.1em;
+    word-break: break-word;
     margin: 0;
 }
 #msg_log li .header {
@@ -423,8 +425,7 @@ button:hover::after {
     font-weight: bold;
 }
 #msg_log li .content {
-    margin-left: 2em;
-    margin-top: 5px;
+    margin-left: 3em;
     margin-bottom: 10px;
 }
 #msg_log a {
