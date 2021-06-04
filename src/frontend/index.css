@@ -356,7 +356,6 @@ button:hover::after {
 }
 #file_transfer {
     border-top: 2px solid var(--accent);
-    display: none;
     position: relative;
 }
 #file_transfer.active {
@@ -454,6 +453,19 @@ button:hover::after {
     width: 2em;
     margin-left: 15px;
 }
-#message_box, #chat_header, #msg_log {
+#message_box, #chat_header, #msg_log, #file_transfer {
     display: none;
+}
+#disconnected {
+    display: none;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+}
+#disconnected.disconnected {
+    display: flex;
+}
+#disconnected img {
+    width: 70px;
+    height: 70px;
 }

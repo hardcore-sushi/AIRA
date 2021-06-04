@@ -1,7 +1,7 @@
 "use strict";
 
 let identityName = undefined;
-let socket = null;
+let socket = new WebSocket("ws://"+location.hostname+":"+websocketPort+"/ws");;
 let notificationAllowed = false;
 let localIps = [];
 let currentSessionId = -1;
@@ -14,7 +14,7 @@ let avatarTimestamps = new Map([
 
 function onClickSession(event) {
     let sessionId = event.currentTarget.getAttribute("data-sessionId");
-    if (sessionId != null) {
+    if (sessionId != null && socket.readyState === WebSocket.OPEN) {
         currentSessionId = sessionId;
         let session = sessionsData.get(sessionId);
         if (!session.seen) {
@@ -437,7 +437,6 @@ function getCookie(cname) {
     return "";
 }
 
-socket = new WebSocket("ws://"+location.hostname+":"+websocketPort+"/ws");
 socket.onopen = function() {
     console.log("Connected");
     socket.send(getCookie("aira_auth")); //authenticating websocket connection
@@ -519,6 +518,12 @@ socket.onmessage = function(msg) {
 };
 socket.onclose = function() {
     console.log("Disconnected");
+    currentSessionId = -1;
+    displayHistory();
+    displayHeader();
+    displayChatBottom();
+    displaySessions();
+    document.getElementById("disconnected").classList.add("disconnected");
 };
 
 function onNewSession(sessionId, outgoing, fingerprint, ip, name) {
@@ -1128,32 +1133,34 @@ function displayChatBottom(speed = undefined) {
     }
 }
 function displayHistory(scrollToBottom = true) {
-    msg_log.style.display = "block";
     msg_log.innerHTML = "";
     let session = sessionsData.get(currentSessionId);
-    let previousOutgoing = undefined;
-    msgHistory.get(currentSessionId).forEach(entry => {
-        let name = undefined;
-        let sessionId = undefined;
-        if (previousOutgoing != entry[0]) {
-            previousOutgoing = entry[0];
-            if (entry[0]) { //outgoing msg
-                name = identityName;
-            } else {
-                name = session.name;
-                sessionId = currentSessionId;
+    if (typeof session === "undefined") {
+        msg_log.style.display = "none";
+    } else {
+        msg_log.style.display = "block";
+        let previousOutgoing = undefined;
+        msgHistory.get(currentSessionId).forEach(entry => {
+            let name = undefined;
+            let sessionId = undefined;
+            if (previousOutgoing != entry[0]) {
+                previousOutgoing = entry[0];
+                if (entry[0]) { //outgoing msg
+                    name = identityName;
+                } else {
+                    name = session.name;
+                    sessionId = currentSessionId;
+                }
             }
+            if (entry[1]) { //is file
+                msg_log.appendChild(generateFile(name, sessionId, entry[0], entry[2]));
+            } else {
+                msg_log.appendChild(generateMessage(name, sessionId, entry[2]));
+            }
+        });
+        if (scrollToBottom) {
+            msg_log.scrollTop = msg_log.scrollHeight;
         }
-        if (entry[1]) { //is file
-            msg_log.appendChild(generateFile(name, sessionId, entry[0], entry[2]));
-        } else {
-            msg_log.appendChild(generateMessage(name, sessionId, entry[2]));
-        }
-    });
-    if (scrollToBottom) {
-        msg_log.scrollTop = msg_log.scrollHeight;
-    }
-    if (typeof session !== "undefined") {
         if (msg_log.scrollHeight <= msg_log.clientHeight && session.isContact) {
             socket.send("load_msgs "+currentSessionId);
         }
