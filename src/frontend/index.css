@@ -255,7 +255,8 @@ button:hover::after {
 #left_panel ul li.is_verified p::after {
     content: url("/static/imgs/icons/verified/ACCENT_COLOR");
 }
-#left_panel ul li .not_seen_marker {
+#left_panel ul li.not_seen::after {
+    content: "";
     width: 12px;
     height: 12px;
     background-color: var(--accent);
@@ -407,7 +408,7 @@ button:hover::after {
     margin-bottom: 0;
 }
 #msg_log {
-    overflow-y: scroll;
+    overflow-y: auto;
     white-space: pre-wrap;
 }
 #msg_log p {

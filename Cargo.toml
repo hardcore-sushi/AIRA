@@ -43,3 +43,6 @@ yaml-rust = "0.4" #only in debug mode
 html-minifier = "3.0"
 yaml-rust = "0.4"
 linked-hash-map = "0.5"
+
+[profile.dev.package.scrypt]
+opt-level = 3

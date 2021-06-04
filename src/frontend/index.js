@@ -1002,9 +1002,7 @@ function generateSession(sessionId, session) {
         li.classList.add("is_verified");
     }
     if (!session.seen) {
-        let marker = document.createElement("div");
-        marker.classList.add("not_seen_marker");
-        li.appendChild(marker);
+        li.classList.add("not_seen");
     }
     if (sessionId == currentSessionId) {
         li.classList.add("current");
