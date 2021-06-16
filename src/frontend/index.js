@@ -604,8 +604,10 @@ function onMsgOrFileReceived(sessionId, outgoing, body) {
     }
     if (document.hidden && !outgoing) {
         if (notificationAllowed) {
-            new Notification(sessionsData.get(sessionId).name, {
-                "body": body
+            let sessionName = sessionsData.get(sessionId).name;
+            new Notification(sessionName, {
+                "body": body,
+                "icon": "/avatar/"+sessionId+"/"+sessionName+"?"+avatarTimestamps.get(sessionId)
             });
         }
     }
@@ -698,7 +700,8 @@ function onAskLargeFiles(sessionId, encodedDownloadLocation, filesInfo) {
     showPopup(mainDiv, false);
     if (document.hidden && notificationAllowed) {
         new Notification(sessionName, {
-            "body": "Files download request"
+            "body": "Files download request",
+            "icon": "/avatar/"+sessionId+"/"+sessionName+"?"+avatarTimestamps.get(sessionId)
         });
     }
 }
