@@ -13,7 +13,6 @@ use image::GenericImageView;
 use tokio::{net::TcpListener, runtime::Handle, sync::mpsc};
 use actix_web::{App, HttpMessage, HttpRequest, HttpResponse, HttpServer, http::{header, CookieBuilder}, web, web::Data};
 use actix_multipart::Multipart;
-use tungstenite::Message;
 use futures::{StreamExt, TryStreamExt};
 use rand::{RngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
@@ -24,6 +23,7 @@ use utils::escape_double_quote;
 use identity::Identity;
 use session_manager::{SessionManager, SessionCommand};
 use ui_interface::UiConnection;
+use crate::{identity::Message, utils::get_unix_timestamp_sec};
 
 async fn start_websocket_server(global_vars: Arc<RwLock<GlobalVars>>) -> u16 {
     let websocket_bind_addr = env::var("AIRA_WEBSOCKET_ADDR").unwrap_or("127.0.0.1".to_owned());
@@ -137,7 +137,7 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
             match ui_connection.websocket.read_message() {
                 Ok(msg) => {
                     if msg.is_ping() {
-                        ui_connection.write_message(Message::Pong(Vec::new())); //not sure if I'm doing this right
+                        ui_connection.write_message(tungstenite::Message::Pong(Vec::new())); //not sure if I'm doing this right
                     } else if msg.is_text() {
                         let msg = msg.into_text().unwrap();
                         let mut ui_connection = ui_connection.clone();
@@ -161,10 +161,15 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                 "send" => {
                                     let session_id: usize = args[1].parse().unwrap();
                                     let buffer = protocol::new_message(msg[args[0].len()+args[1].len()+2..].to_string());
+                                    let timestamp = get_unix_timestamp_sec();
                                     if session_manager.send_command(&session_id, SessionCommand::Send {
                                         buff: buffer.clone()
                                     }).await {
-                                        session_manager.store_msg(&session_id, true, buffer);
+                                        session_manager.store_msg(&session_id, Message {
+                                            outgoing: true,
+                                            timestamp,
+                                            data: buffer,
+                                        });
                                     }
                                 }
                                 "large_files" => {
@@ -435,13 +440,18 @@ async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpRespo
                         while let Some(Ok(chunk)) = field.next().await {
                             buffer.extend(chunk);
                         }
+                        let timestamp = get_unix_timestamp_sec();
                         if global_vars_read.session_manager.send_command(&session_id,  SessionCommand::Send {
                             buff: protocol::file(filename, &buffer)
                         }).await {
                             match global_vars_read.session_manager.store_file(&session_id, &buffer) {
                                 Ok(file_uuid) => {
                                     let msg = [&[protocol::Headers::FILE][..], file_uuid.as_bytes(), filename.as_bytes()].concat();
-                                    global_vars_read.session_manager.store_msg(&session_id, true, msg);
+                                    global_vars_read.session_manager.store_msg(&session_id, Message {
+                                        outgoing: true,
+                                        timestamp,
+                                        data: msg,
+                                    });
                                     return HttpResponse::Ok().body(file_uuid.to_string());
                                 }
                                 Err(e) => print_error!(e)

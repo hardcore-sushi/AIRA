@@ -215,7 +215,7 @@ document.getElementById("attach_file").onchange = function(event) {
             formData.append("", files[i]);
             fetch("/send_file", {method: "POST", body: formData}).then(response => {
                 if (response.ok) {
-                    response.text().then(uuid => onFileSent(currentSessionId, uuid, files[i].name));
+                    response.text().then(uuid => onFileSent(currentSessionId, new Date.now(), uuid, files[i].name));
                 } else {
                     console.log(response);
                 }
@@ -436,6 +436,16 @@ function getCookie(cname) {
     }
     return "";
 }
+function parseTimestamp(timestamp) {
+    return new Date(Number(timestamp) * 1000);
+}
+function toTwoNumbers(n) {
+    if (n < 10) {
+        return '0'+n;
+    } else {
+        return n;
+    }
+}
 
 socket.onopen = function() {
     console.log("Connected");
@@ -467,10 +477,10 @@ socket.onmessage = function(msg) {
                 onNewSession(args[1], args[2] === "true", args[3], args[4], msg.data.slice(args[0].length+args[1].length+args[2].length+args[3].length+args[4].length+5));
                 break;
             case "new_message":
-                onNewMessage(args[1], args[2] === "true", msg.data.slice(args[0].length+args[1].length+args[2].length+3));
+                onNewMessage(args[1], args[2] === "true", parseTimestamp(args[3]), msg.data.slice(args[0].length+args[1].length+args[2].length+args[3].length+4));
                 break;
             case "file":
-                onFileReceived(args[1], args[2], msg.data.slice(args[0].length+args[1].length+args[2].length+3));
+                onFileReceived(args[1], parseTimestamp(args[2]), args[3], msg.data.slice(args[0].length+args[1].length+args[2].length+args[3].length+4));
                 break;
             case "files_transfer":
                 onNewFilesTransfer(args[1], args[2], msg.data.slice(args[0].length+args[1].length+args[2].length+3));
@@ -600,8 +610,8 @@ function onMsgOrFileReceived(sessionId, outgoing, body) {
         }
     }
 }
-function onNewMessage(sessionId, outgoing, msg) {
-    msgHistory.get(sessionId).push([outgoing, false, msg]);
+function onNewMessage(sessionId, outgoing, timestamp, msg) {
+    msgHistory.get(sessionId).push([outgoing, timestamp, false, msg]);
     onMsgOrFileReceived(sessionId, outgoing, msg);
 }
 function onNewFilesTransfer(sessionId, index, filesInfo) {
@@ -731,29 +741,32 @@ function onIncFilesTransfer(sessionId, chunkSize) {
 }
 function onMsgsLoad(sessionId, strMsgs) {
     let msgs = strMsgs.split(' ');
-    let n = 0;
-    while (n < msgs.length) {
-        let outgoing = msgs[n+1] === "true";
-        switch (msgs[n]) {
-            case 'm':
-                let msg = b64DecodeUnicode(msgs[n+2]);
-                msgHistory.get(sessionId).unshift([outgoing, false, msg]);
-                n += 3;
-                break;
-            case 'f':
-                let uuid = msgs[n+2];
-                let fileName = b64DecodeUnicode(msgs[n+3]);
-                msgHistory.get(sessionId).unshift([outgoing, true, [uuid, fileName]]);
-                n += 4;
+    if (msgs.length > 3) {
+        let n = 0;
+        while (n < msgs.length) {
+            let outgoing = msgs[n+1] === "true";
+            let timestamp = parseTimestamp(msgs[n+2]);
+            switch (msgs[n]) {
+                case 'm':
+                    let msg = b64DecodeUnicode(msgs[n+3]);
+                    msgHistory.get(sessionId).unshift([outgoing, timestamp, false, msg]);
+                    n += 4;
+                    break;
+                case 'f':
+                    let uuid = msgs[n+3];
+                    let fileName = b64DecodeUnicode(msgs[n+4]);
+                    msgHistory.get(sessionId).unshift([outgoing, timestamp, true, [uuid, fileName]]);
+                    n += 5;
+            }
         }
-    }
-    if (currentSessionId == sessionId) {
-        if (msg_log.scrollHeight - msg_log.scrollTop === msg_log.clientHeight) {
-            displayHistory();
-        } else {
-            let backupHeight = msg_log.scrollHeight;
-            displayHistory(false);
-            msg_log.scrollTop = msg_log.scrollHeight-backupHeight;
+        if (currentSessionId == sessionId) {
+            if (msg_log.scrollHeight - msg_log.scrollTop === msg_log.clientHeight) {
+                displayHistory();
+            } else {
+                let backupHeight = msg_log.scrollHeight;
+                displayHistory(false);
+                msg_log.scrollTop = msg_log.scrollHeight-backupHeight;
+            }
         }
     }
 }
@@ -774,12 +787,12 @@ function onDisconnected(sessionId) {
     }
     displaySessions();
 }
-function onFileReceived(sessionId, uuid, file_name) {
-    msgHistory.get(sessionId).push([false, true, [uuid, file_name]]);
+function onFileReceived(sessionId, timestamp, uuid, file_name) {
+    msgHistory.get(sessionId).push([false, timestamp, true, [uuid, file_name]]);
     onMsgOrFileReceived(sessionId, false, file_name);
 }
-function onFileSent(sessionId, uuid, file_name) {
-    msgHistory.get(sessionId).push([true, true, [uuid, file_name]]);
+function onFileSent(sessionId, timestamp, uuid, file_name) {
+    msgHistory.get(sessionId).push([true, timestamp, true, [uuid, file_name]]);
     if (currentSessionId == sessionId) {
         displayHistory();
     }
@@ -1030,18 +1043,25 @@ function generateMsgHeader(name, sessionId) {
     div.appendChild(p);
     return div;
 }
+function generateMessageTimestamp(timestamp) {
+    let p = document.createElement("p");
+    p.classList.add("timestamp");
+    p.title = timestamp;
+    p.textContent = toTwoNumbers(timestamp.getHours())+":"+toTwoNumbers(timestamp.getMinutes());
+    return p;
+}
 function generateMessage(name, sessionId, msg) {
     let p = document.createElement("p");
     p.appendChild(document.createTextNode(msg));
     let div = document.createElement("div");
     div.classList.add("content");
     div.appendChild(linkifyElement(p));
-    let li = document.createElement("li");
+    let divContainer = document.createElement("div");
     if (typeof name !== "undefined") {
-        li.appendChild(generateMsgHeader(name, sessionId));
+        divContainer.appendChild(generateMsgHeader(name, sessionId));
     }
-    li.appendChild(div);
-    return li;
+    divContainer.appendChild(div);
+    return divContainer;
 }
 function generateFile(name, sessionId, outgoing, file_info) {
     let div1 = document.createElement("div");
@@ -1063,12 +1083,12 @@ function generateFile(name, sessionId, outgoing, file_info) {
     a.href = "/load_file?uuid="+file_info[0]+"&file_name="+encodeURIComponent(file_info[1]);
     a.target = "_blank";
     div1.appendChild(a);
-    let li = document.createElement("li");
+    let divContainer = document.createElement("div");
     if (typeof name !== "undefined") {
-        li.appendChild(generateMsgHeader(name, sessionId));
+        divContainer.appendChild(generateMsgHeader(name, sessionId));
     }
-    li.appendChild(div1);
-    return li;
+    divContainer.appendChild(div1);
+    return divContainer;
 }
 function generateFileInfo(fileName, fileSize, p) {
     let span = document.createElement("span");
@@ -1152,11 +1172,16 @@ function displayHistory(scrollToBottom = true) {
                     sessionId = currentSessionId;
                 }
             }
-            if (entry[1]) { //is file
-                msg_log.appendChild(generateFile(name, sessionId, entry[0], entry[2]));
+            let div;
+            if (entry[2]) { //is file
+                div = generateFile(name, sessionId, entry[0], entry[3]);
             } else {
-                msg_log.appendChild(generateMessage(name, sessionId, entry[2]));
+                div = generateMessage(name, sessionId, entry[3]);
             }
+            let li = document.createElement("li");
+            li.appendChild(div);
+            li.appendChild(generateMessageTimestamp(entry[1]));
+            msg_log.appendChild(li);
         });
         if (scrollToBottom) {
             msg_log.scrollTop = msg_log.scrollHeight;

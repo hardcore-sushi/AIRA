@@ -16,8 +16,12 @@ pub fn escape_double_quote(origin: String) -> String {
     origin.replace("\"", "\\\"")
 }
 
-pub fn get_unix_timestamp() -> u128 {
+pub fn get_unix_timestamp_ms() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()
+}
+
+pub fn get_unix_timestamp_sec() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
 }
 
 pub fn get_not_used_path(file_name: &str, parent_directory: &PathBuf) -> String {
