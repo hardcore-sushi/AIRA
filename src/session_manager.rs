@@ -100,7 +100,10 @@ impl SessionManager {
             }
         }
         if !msg_saved {
-            self.saved_msgs.write().unwrap().get_mut(&session_id).unwrap().push(message);
+            //can be None if session disconnected
+            if let Some(saved_msgs) = self.saved_msgs.write().unwrap().get_mut(&session_id) {
+                saved_msgs.push(message)
+            }
         }
     }
 
@@ -412,7 +415,7 @@ impl SessionManager {
                             }
                         }
                         Err(e) => {
-                            if e != PsecError::BrokenPipe && e != PsecError::ConnectionReset && e != PsecError::BufferTooLarge {
+                            if e != PsecError::BrokenPipe && e != PsecError::ConnectionReset {
                                 print_error!(e);
                             }
                             break;
@@ -468,6 +471,7 @@ impl SessionManager {
     fn handle_new_session(session_manager: Arc<SessionManager>, mut session: Session, outgoing: bool) {
         tokio::spawn(async move {
             let mut peer_public_key = [0; PUBLIC_KEY_LENGTH];
+            session.set_max_recv_size(constants::MAX_RECV_SIZE, false);
             let session = {
                 let identity = {
                     session_manager.identity.read().unwrap().clone()

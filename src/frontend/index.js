@@ -174,7 +174,7 @@ document.getElementById("attach_file").onchange = function(event) {
     let files = event.target.files;
     let useLargeFileTransfer = false;
     for (let i=0; i<files.length; ++i) {
-        if (files[i].size > 32760000) {
+        if (files[i].size > 16380000) {
             useLargeFileTransfer = true;
             break;
         }
@@ -215,7 +215,7 @@ document.getElementById("attach_file").onchange = function(event) {
             formData.append("", files[i]);
             fetch("/send_file", {method: "POST", body: formData}).then(response => {
                 if (response.ok) {
-                    response.text().then(uuid => onFileSent(currentSessionId, new Date.now(), uuid, files[i].name));
+                    response.text().then(uuid => onFileSent(currentSessionId, new Date(), uuid, files[i].name));
                 } else {
                     console.log(response);
                 }
