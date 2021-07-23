@@ -1,54 +1,37 @@
-use std::{net::{IpAddr, TcpStream}};
+use std::{fmt::Display, iter::FromIterator, net::{IpAddr, TcpStream}, str::from_utf8};
 use tungstenite::{WebSocket, protocol::Role, Message};
 use uuid::Uuid;
-use crate::{identity, session_manager::{LargeFileDownload, LargeFilesDownload}};
+use crate::{identity, print_error, protocol, session_manager::{LargeFileDownload, LargeFilesDownload}, utils::to_uuid_bytes};
 
-mod ui_messages {
-    use std::{fmt::Display, iter::FromIterator, net::IpAddr, str::from_utf8};
-    use tungstenite::Message;
-    use uuid::Uuid;
-    use crate::{identity, print_error, protocol, session_manager::{LargeFileDownload, LargeFilesDownload}, utils::to_uuid_bytes};
+pub struct UiConnection{
+    pub websocket: WebSocket<TcpStream>,
+    pub is_valid: bool
+}
 
-    fn simple_event(command: &str, session_id: &usize) -> Message {
-        Message::from(format!("{} {}", command, session_id))
-    }
-    fn data_list<T: Display>(command: &str, data: Vec<T>) -> Message {
-        Message::from(command.to_owned()+&String::from_iter(data.into_iter().map(|i| {
-            format!(" {}", i)
-        })))
-    }
-
-    pub fn on_disconnected(session_id: &usize) -> Message {
-        simple_event("disconnected", session_id)
-    }
-    pub fn on_new_session(session_id: &usize, name: &str, outgoing: bool, fingerprint: &str, ip: IpAddr) -> Message {
-        Message::from(format!("new_session {} {} {} {} {}", session_id, outgoing, fingerprint, ip, name))
-    }
-    pub fn on_new_file(session_id: &usize, outgoing: bool, timestamp: u64, filename: &str, uuid: Uuid) -> Message {
-        Message::from(format!("file {} {} {} {} {}", session_id, outgoing, timestamp, uuid.to_string(), filename))
-    }
-    pub fn new_files_transfer(session_id: &usize, files_transfer: &LargeFilesDownload) -> Message {
-        if files_transfer.accepted {
-            let mut s = format!(
-                "files_transfer {} {}",
-                session_id,
-                files_transfer.index
-            );
-            files_transfer.files.iter().for_each(|file| {
-                s.push_str(&format!(
-                    " {} {} {} {}",
-                    base64::encode(&file.file_name),
-                    file.file_size,
-                    file.transferred,
-                    file.last_chunk,
-                ));
-            });
-            Message::from(s)
-        } else {
-            on_ask_large_files(session_id, &files_transfer.files, files_transfer.download_location.to_str().unwrap())   
+impl UiConnection {
+    pub fn new(websocket: WebSocket<TcpStream>) -> UiConnection {
+        UiConnection {
+            websocket: websocket,
+            is_valid: true
         }
     }
-    pub fn on_ask_large_files(session_id: &usize, files: &Vec<LargeFileDownload>, download_location: &str) -> Message {
+
+    pub fn write_message<T: Into<Message>>(&mut self, message: T) {
+        if self.websocket.write_message(message.into()).is_err() {
+            self.is_valid = false
+        }
+    }
+
+    fn simple_event(&mut self, command: &str, session_id: &usize) {
+        self.write_message(format!("{} {}", command, session_id));
+    }
+    fn data_list<T: Display>(command: &str, data: Vec<T>) -> String {
+        command.to_string()+&String::from_iter(data.into_iter().map(|i| {
+            format!(" {}", i)
+        }))
+    }
+
+    pub fn on_ask_large_files(&mut self, session_id: &usize, files: &Vec<LargeFileDownload>, download_location: &str) {
         let mut s = format!("ask_large_files {} {}", session_id, base64::encode(download_location));
         files.into_iter().for_each(|file| {
             s.push_str(&format!(
@@ -57,27 +40,67 @@ mod ui_messages {
                 file.file_size,
             ));
         });
-        Message::from(s)
+        self.write_message(s);
     }
-    pub fn on_large_files_accepted(session_id: &usize) -> Message {
-        simple_event("files_accepted", session_id)
+    pub fn on_large_files_accepted(&mut self, session_id: &usize) {
+        self.simple_event("files_accepted", session_id);
     }
-    pub fn on_new_message(session_id: &usize, message: &identity::Message) -> Option<Message> {
+    pub fn on_file_transfer_aborted(&mut self, session_id: &usize) {
+        self.simple_event("aborted", session_id);
+    }
+    pub fn on_new_msg(&mut self, session_id: &usize, message: &identity::Message) {
         match from_utf8(&message.data[1..]) {
-            Ok(msg) => Some(Message::from(format!("new_message {} {} {} {}", session_id, message.outgoing, message.timestamp, msg))),
-            Err(e) => {
-                print_error!(e);
-                None
+            Ok(msg) => self.write_message(format!("new_message {} {} {} {}", session_id, message.outgoing, message.timestamp, msg)),
+            Err(e) => print_error!(e)
+        }
+    }
+    pub fn on_new_file(&mut self, session_id: &usize, outgoing: bool, timestamp: u64, filename: &str, uuid: Uuid) {
+        self.write_message(format!("file {} {} {} {} {}", session_id, outgoing, timestamp, uuid.to_string(), filename));
+    }
+    pub fn on_new_session(&mut self, session_id: &usize, name: &str, outgoing: bool, fingerprint: &str, ip: IpAddr, files_transfer: Option<&LargeFilesDownload>) {
+        self.write_message(format!("new_session {} {} {} {} {}", session_id, outgoing, fingerprint, ip, name));
+        if let Some(files_transfer) = files_transfer {
+            if files_transfer.accepted {
+                let mut s = format!(
+                    "files_transfer {} {}",
+                    session_id,
+                    files_transfer.index
+                );
+                files_transfer.files.iter().for_each(|file| {
+                    s.push_str(&format!(
+                        " {} {} {} {}",
+                        base64::encode(&file.file_name),
+                        file.file_size,
+                        file.transferred,
+                        file.last_chunk,
+                    ));
+                });
+                self.write_message(s);
+            } else {
+                self.on_ask_large_files(session_id, &files_transfer.files, files_transfer.download_location.to_str().unwrap())
             }
         }
     }
-    pub fn inc_files_transfer(session_id: &usize, chunk_size: u64) -> Message {
-        Message::from(format!("inc_file_transfer {} {}", session_id, chunk_size))
+    pub fn on_disconnected(&mut self, session_id: &usize) {
+        self.simple_event("disconnected", session_id);
     }
-    pub fn on_file_transfer_aborted(session_id: &usize) -> Message {
-        simple_event("aborted", session_id)
+    pub fn on_name_told(&mut self, session_id: &usize, name: &str) {
+        self.write_message(format!("name_told {} {}", session_id, name));
     }
-    pub fn load_msgs(session_id: &usize, msgs: &Vec<identity::Message>) -> Message {
+    pub fn on_avatar_changed(&mut self, session_id: Option<&usize>) {
+        match session_id {
+            Some(session_id) => self.simple_event("avatar_changed", session_id),
+            None => self.write_message("avatar_changed self")
+        }
+    }
+
+    pub fn inc_files_transfer(&mut self, session_id: &usize, chunk_size: u64) {
+        self.write_message(format!("inc_file_transfer {} {}", session_id, chunk_size));
+    }
+    pub fn set_as_contact(&mut self, session_id: usize, name: &str, verified: bool, fingerprint: &str) {
+        self.write_message(format!("is_contact {} {} {} {}", session_id, verified, fingerprint, name));
+    }
+    pub fn load_msgs(&mut self, session_id: &usize, msgs: &Vec<identity::Message>) {
         let mut s = format!("load_msgs {}", session_id);
         msgs.into_iter().rev().for_each(|message| {
             match message.data[0] {
@@ -95,128 +118,31 @@ mod ui_messages {
                 _ => {}
             }
         });
-        Message::from(s)
-    }
-    pub fn set_not_seen(session_ids: Vec<usize>) -> Message {
-        data_list("not_seen", session_ids)
-    }
-    pub fn new_pending_msg(session_id: &usize, is_file: bool, data: &str) -> Message {
-        Message::from(format!("pending {} {} {}", session_id, is_file, data))
-    }
-    pub fn on_sending_pending_msgs(session_id: &usize) -> Message {
-        simple_event("sending_pending_msgs", session_id)
-    }
-    pub fn on_pending_msgs_sent(session_id: &usize) -> Message {
-        simple_event("pending_msgs_sent", session_id)
-    }
-    pub fn set_local_ips(ips: Vec<IpAddr>) -> Message {
-        data_list("local_ips", ips)
-    }
-    pub fn on_name_told(session_id: &usize, name: &str) -> Message {
-        Message::from(format!("name_told {} {}", session_id, name))
-    }
-    pub fn on_avatar_changed(session_id: Option<&usize>) -> Message {
-        match session_id {
-            Some(session_id) => simple_event("avatar_changed", session_id),
-            None => Message::from("avatar_changed self")
-        }
-    }
-    pub fn set_as_contact(session_id: usize, name: &str, verified: bool, fingerprint: &str) -> Message {
-        Message::from(format!("is_contact {} {} {} {}", session_id, verified, fingerprint, name))
-    }
-    pub fn set_name(new_name: &str) -> Message {
-        Message::from(format!("set_name {}", new_name))
-    }
-    pub fn password_changed(success: bool, is_protected: bool) -> Message {
-        Message::from(format!("password_changed {} {}", success, is_protected))
-    }
-}
-
-pub struct UiConnection{
-    pub websocket: WebSocket<TcpStream>,
-    pub is_valid: bool
-}
-
-impl UiConnection {
-    pub fn new(websocket: WebSocket<TcpStream>) -> UiConnection {
-        UiConnection {
-            websocket: websocket,
-            is_valid: true
-        }
-    }
-
-    pub fn write_message(&mut self, message: Message) {
-        if self.websocket.write_message(message).is_err() {
-            self.is_valid = false
-        }
-    }
-
-    pub fn on_ask_large_files(&mut self, session_id: &usize, files: &Vec<LargeFileDownload>, download_location: &str) {
-        self.write_message(ui_messages::on_ask_large_files(session_id, files, download_location));
-    }
-    pub fn on_large_files_accepted(&mut self, session_id: &usize) {
-        self.write_message(ui_messages::on_large_files_accepted(session_id));
-    }
-    pub fn on_file_transfer_aborted(&mut self, session_id: &usize) {
-        self.write_message(ui_messages::on_file_transfer_aborted(&session_id));
-    }
-    pub fn on_new_msg(&mut self, session_id: &usize, message: &identity::Message) {
-        match ui_messages::on_new_message(session_id, message) {
-            Some(msg) => self.write_message(msg),
-            None => {}
-        }
-    }
-    pub fn on_new_file(&mut self, session_id: &usize, outgoing: bool, timestamp: u64, filename: &str, uuid: Uuid) {
-        self.write_message(ui_messages::on_new_file(session_id, outgoing, timestamp, filename, uuid));
-    }
-    pub fn on_new_session(&mut self, session_id: &usize, name: &str, outgoing: bool, fingerprint: &str, ip: IpAddr, files_transfer: Option<&LargeFilesDownload>) {
-        self.write_message(ui_messages::on_new_session(session_id, name, outgoing, fingerprint, ip));
-        if let Some(files_transfer) = files_transfer {
-            self.write_message(ui_messages::new_files_transfer(session_id, files_transfer));
-        }
-    }
-    pub fn on_disconnected(&mut self, session_id: &usize) {
-        self.write_message(ui_messages::on_disconnected(session_id));
-    }
-    pub fn on_name_told(&mut self, session_id: &usize, name: &str) {
-        self.write_message(ui_messages::on_name_told(session_id, name));
-    }
-    pub fn on_avatar_changed(&mut self, session_id: Option<&usize>) {
-        self.write_message(ui_messages::on_avatar_changed(session_id));
-    }
-
-    pub fn inc_files_transfer(&mut self, session_id: &usize, chunk_size: u64) {
-        self.write_message(ui_messages::inc_files_transfer(session_id, chunk_size));
-    }
-    pub fn set_as_contact(&mut self, session_id: usize, name: &str, verified: bool, fingerprint: &str) {
-        self.write_message(ui_messages::set_as_contact(session_id, name, verified, fingerprint));
-    }
-    pub fn load_msgs(&mut self, session_id: &usize, msgs: &Vec<identity::Message>) {
-        self.write_message(ui_messages::load_msgs(session_id, msgs));
+        self.write_message(s);
     }
     pub fn set_not_seen(&mut self, session_ids: Vec<usize>) {
-        self.write_message(ui_messages::set_not_seen(session_ids));
+        self.write_message(Self::data_list("not_seen", session_ids));
     }
     pub fn new_pending_msg(&mut self, session_id: &usize, is_file: bool, data: &str) {
-        self.write_message(ui_messages::new_pending_msg(session_id, is_file, data));
+        self.write_message(format!("pending {} {} {}", session_id, is_file, data));
     }
     pub fn on_sending_pending_msgs(&mut self, session_id: &usize) {
-        self.write_message(ui_messages::on_sending_pending_msgs(session_id));
+        self.simple_event("sending_pending_msgs", session_id);
     }
     pub fn on_pending_msgs_sent(&mut self, session_id: &usize) {
-        self.write_message(ui_messages::on_pending_msgs_sent(session_id));
+        self.simple_event("pending_msgs_sent", session_id);
     }
     pub fn set_local_ips(&mut self, ips: Vec<IpAddr>) {
-        self.write_message(ui_messages::set_local_ips(ips));
+        self.write_message(Self::data_list("local_ips", ips));
     }
     pub fn set_name(&mut self, new_name: &str) {
-        self.write_message(ui_messages::set_name(new_name));
+        self.write_message(format!("set_name {}", new_name));
     }
     pub fn password_changed(&mut self, success: bool, is_protected: bool) {
-        self.write_message(ui_messages::password_changed(success, is_protected));
+        self.write_message(format!("password_changed {} {}", success, is_protected));
     }
     pub fn logout(&mut self) {
-        self.write_message(Message::from("logout"));
+        self.write_message("logout");
     }
 }
 
