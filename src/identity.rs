@@ -249,7 +249,7 @@ impl Identity {
         Ok(file_uuid)
     }
 
-    pub fn store_msg(&self, contact_uuid: &Uuid, message: Message) -> Result<usize, rusqlite::Error> {
+    pub fn store_msg(&self, contact_uuid: &Uuid, message: &Message) -> Result<usize, rusqlite::Error> {
         let db = Connection::open(get_database_path())?;
         db.execute(&format!("CREATE TABLE IF NOT EXISTS \"{}\" (outgoing BLOB, timestamp BLOB, data BLOB)", contact_uuid), [])?;
         let outgoing_byte: u8 = bool_to_byte(message.outgoing);

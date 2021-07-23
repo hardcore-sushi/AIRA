@@ -23,7 +23,6 @@ use utils::escape_double_quote;
 use identity::Identity;
 use session_manager::{SessionManager, SessionCommand};
 use ui_interface::UiConnection;
-use crate::{identity::Message, utils::get_unix_timestamp_sec};
 
 async fn start_websocket_server(global_vars: Arc<RwLock<GlobalVars>>) -> u16 {
     let websocket_bind_addr = env::var("AIRA_WEBSOCKET_ADDR").unwrap_or("127.0.0.1".to_owned());
@@ -120,6 +119,20 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
             ui_connection.load_msgs(&msgs.0, &msgs.1);
         }
     });
+    session_manager.pending_msgs.lock().unwrap().iter().for_each(|entry| {
+        entry.1.iter().for_each(|buff| {
+            match buff[0] {
+                protocol::Headers::MESSAGE => match from_utf8(&buff[1..]) {
+                    Ok(msg) => ui_connection.new_pending_msg(entry.0, false, msg),
+                    Err(e) => print_error!(e)
+                }
+                protocol::Headers::FILE => if let Some(filename) = protocol::get_file_name(buff) {
+                    ui_connection.new_pending_msg(entry.0, true, filename);
+                }
+                _ => {}
+            }
+        });
+    });
     let mut ips = Vec::new();
     match if_addrs::get_if_addrs() {
         Ok(ifaces) => for iface in ifaces {
@@ -160,15 +173,11 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                 "refresh" => discover_peers(session_manager.clone()),
                                 "send" => {
                                     let session_id: usize = args[1].parse().unwrap();
-                                    let buffer = protocol::new_message(msg[args[0].len()+args[1].len()+2..].to_string());
-                                    let timestamp = get_unix_timestamp_sec();
-                                    if session_manager.send_command(&session_id, SessionCommand::Send {
-                                        buff: buffer.clone()
-                                    }).await {
-                                        session_manager.store_msg(&session_id, Message {
-                                            outgoing: true,
-                                            timestamp,
-                                            data: buffer,
+                                    let msg_content = &msg[args[0].len()+args[1].len()+2..];
+                                    let buffer = protocol::new_message(msg_content);
+                                    #[allow(unused_must_use)] {
+                                        session_manager.send_or_add_to_pending(&session_id, buffer).await.map(|sent| if !sent {
+                                            ui_connection.new_pending_msg(&session_id, false, msg_content);
                                         });
                                     }
                                 }
@@ -178,9 +187,9 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                     for n in (2..args.len()).step_by(2) {
                                         file_info.push((args[n].parse::<u64>().unwrap(), base64::decode(args[n+1]).unwrap()));
                                     }
-                                    session_manager.send_command(&session_id, SessionCommand::Send {
-                                        buff: protocol::ask_large_files(file_info)
-                                    }).await;
+                                    #[allow(unused_must_use)] {
+                                        session_manager.send_or_add_to_pending(&session_id, protocol::ask_large_files(file_info)).await;
+                                    }
                                 }
                                 "download" => {
                                     let session_id: usize = args[1].parse().unwrap();
@@ -211,7 +220,7 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                 }
                                 "uncontact" => {
                                     let session_id: usize = args[1].parse().unwrap();
-                                    match session_manager.remove_contact(session_id) {
+                                    match session_manager.remove_contact(&session_id) {
                                         Ok(_) => {},
                                         Err(e) => print_error!(e)
                                     }
@@ -440,22 +449,12 @@ async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpRespo
                         while let Some(Ok(chunk)) = field.next().await {
                             buffer.extend(chunk);
                         }
-                        let timestamp = get_unix_timestamp_sec();
-                        if global_vars_read.session_manager.send_command(&session_id,  SessionCommand::Send {
-                            buff: protocol::file(filename, &buffer)
-                        }).await {
-                            match global_vars_read.session_manager.store_file(&session_id, &buffer) {
-                                Ok(file_uuid) => {
-                                    let msg = [&[protocol::Headers::FILE][..], file_uuid.as_bytes(), filename.as_bytes()].concat();
-                                    global_vars_read.session_manager.store_msg(&session_id, Message {
-                                        outgoing: true,
-                                        timestamp,
-                                        data: msg,
-                                    });
-                                    return HttpResponse::Ok().body(file_uuid.to_string());
-                                }
-                                Err(e) => print_error!(e)
-                            }
+                        if let Ok(sent) = global_vars_read.session_manager.send_or_add_to_pending(&session_id, protocol::file(filename, &buffer)).await {
+                            return if sent {
+                                HttpResponse::Ok().finish()
+                            } else {
+                                HttpResponse::Ok().body("pending")
+                            };
                         }
                     } else {
                         let (ack_sender, mut ack_receiver) = mpsc::channel(1);

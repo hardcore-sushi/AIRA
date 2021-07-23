@@ -17,7 +17,7 @@ impl Headers {
     pub const ABORT_FILES_TRANSFER: u8 = 0x0a;
 }
 
-pub fn new_message(message: String) -> Vec<u8> {
+pub fn new_message(message: &str) -> Vec<u8> {
     [&[Headers::MESSAGE], message.as_bytes()].concat()
 }
 
@@ -33,15 +33,19 @@ pub fn file(file_name: &str, buffer: &[u8]) -> Vec<u8> {
     [&[Headers::FILE], &(file_name.len() as u16).to_be_bytes()[..], file_name.as_bytes(), buffer].concat()
 }
 
-pub fn parse_file<'a>(buffer: &'a [u8]) -> Option<(&'a [u8], &'a [u8])> {
+pub fn get_file_name<'a>(buffer: &'a [u8]) -> Option<&'a str> {
     if buffer.len() > 3 {
         let file_name_len = u16::from_be_bytes([buffer[1], buffer[2]]) as usize;
         if buffer.len() > 3+file_name_len {
-            let file_name = &buffer[3..3+file_name_len];
-            return Some((file_name, &buffer[3+file_name_len..]));
+            return from_utf8(&buffer[3..3+file_name_len]).ok();
         }
     }
     None
+}
+
+pub fn parse_file<'a>(buffer: &'a [u8]) -> Option<(&'a str, &'a [u8])> {
+    let file_name = get_file_name(buffer)?;
+    Some((file_name, &buffer[3+file_name.len()..]))
 }
 
 pub fn ask_large_files(file_info: Vec<(u64, Vec<u8>)>) -> Vec<u8> {

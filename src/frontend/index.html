@@ -41,6 +41,10 @@
                 </div>
                 <ul id="msg_log">
                 </ul>
+                <div id="pending_msgs_indicator">
+                    <div class="lds-spinner"><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div><div></div></div>
+                    <h3>Sending pending messages...</h3>
+                </div>
                 <div id="file_transfer">
                     <div id="file_control">
                         <button id="file_cancel" title="Cancel"></button>
@@ -56,10 +60,18 @@
                     </div>
                 </div>
                 <div id="message_box">
-                    <input type="text" id="message_input" placeholder="Send a message...">
-                    <label title="Send file" class="file_picker">
-                        <input type="file" id="attach_file" multiple>
-                    </label>
+                    <div id="offline_warning">
+                        <div>
+                            <h3>Your contact seems to be offline.</h3>
+                            <p>Sent messages will be stored until a connection is established.</p>
+                        </div>
+                    </div>
+                    <div>
+                        <input type="text" id="message_input" placeholder="Send a message...">
+                        <label title="Send file" class="file_picker">
+                            <input type="file" id="attach_file" multiple>
+                        </label>
+                    </div>
                 </div>
                 <div id="disconnected">
                     <img src="/static/imgs/icons/warning/ff0000">
@@ -80,4 +92,3 @@
         <script src="/static/index.js"></script>
     </body>
 </html>
-

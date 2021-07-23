@@ -402,10 +402,6 @@ button:hover::after {
     height: 100%;
     background-color: var(--accent);
 }
-#message_box {
-    border-top: 2px solid var(--accent);
-    margin-bottom: 0;
-}
 #msg_log {
     overflow-y: auto;
     white-space: pre-wrap;
@@ -472,8 +468,138 @@ button:hover::after {
     width: 2em;
     margin-left: 15px;
 }
-#message_box, #chat_header, #msg_log, #file_transfer {
+#message_box, #message_box.online #offline_warning, #chat_header, #msg_log, #file_transfer {
     display: none;
+}
+#message_box.active {
+    display: block;
+}
+#message_box {
+    border-top: 2px solid red;
+    margin-bottom: 0;
+}
+#message_box>div:nth-child(2) {
+    display: flex;
+}
+#message_box.online {
+    border-top-color: var(--accent);
+}
+#offline_warning {
+    margin-left: 20px;
+    display: flex;
+    align-items: center;
+    gap: 25px;
+}
+#offline_warning::before {
+    content: url("/static/imgs/icons/warning/ff0000");
+    display: block;
+    width: 2em;
+}
+#offline_warning h3 {
+    color: red;
+    display: inline-block;
+    margin-bottom: .3em;
+}
+#offline_warning p {
+    margin-top: 0;
+}
+#msg_log li.pending_msgs_divider {
+    border-top: 1px solid grey;
+    padding-top: 10px;
+    margin-top: 30px;
+    margin-left: 100px;
+    margin-right: 100px;
+}
+#msg_log li.pending_msgs_divider h4 {
+    margin: auto;
+    opacity: .5;
+}
+.lds-spinner {
+  color: official;
+  position: relative;
+  width: 82px;
+  height: 82px;
+}
+.lds-spinner div {
+  transform-origin: 40px 40px;
+  animation: lds-spinner 1.2s linear infinite;
+}
+.lds-spinner div:after {
+  content: " ";
+  display: block;
+  position: absolute;
+  top: 3px;
+  left: 37px;
+  width: 6px;
+  height: 18px;
+  border-radius: 20%;
+  background: #fff;
+}
+.lds-spinner div:nth-child(1) {
+  transform: rotate(0deg);
+  animation-delay: -1.1s;
+}
+.lds-spinner div:nth-child(2) {
+  transform: rotate(30deg);
+  animation-delay: -1s;
+}
+.lds-spinner div:nth-child(3) {
+  transform: rotate(60deg);
+  animation-delay: -0.9s;
+}
+.lds-spinner div:nth-child(4) {
+  transform: rotate(90deg);
+  animation-delay: -0.8s;
+}
+.lds-spinner div:nth-child(5) {
+  transform: rotate(120deg);
+  animation-delay: -0.7s;
+}
+.lds-spinner div:nth-child(6) {
+  transform: rotate(150deg);
+  animation-delay: -0.6s;
+}
+.lds-spinner div:nth-child(7) {
+  transform: rotate(180deg);
+  animation-delay: -0.5s;
+}
+.lds-spinner div:nth-child(8) {
+  transform: rotate(210deg);
+  animation-delay: -0.4s;
+}
+.lds-spinner div:nth-child(9) {
+  transform: rotate(240deg);
+  animation-delay: -0.3s;
+}
+.lds-spinner div:nth-child(10) {
+  transform: rotate(270deg);
+  animation-delay: -0.2s;
+}
+.lds-spinner div:nth-child(11) {
+  transform: rotate(300deg);
+  animation-delay: -0.1s;
+}
+.lds-spinner div:nth-child(12) {
+  transform: rotate(330deg);
+  animation-delay: 0s;
+}
+@keyframes lds-spinner {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+#pending_msgs_indicator {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+#pending_msgs_indicator.sending {
+    display: flex;
 }
 #disconnected {
     display: none;

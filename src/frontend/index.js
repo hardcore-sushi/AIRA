@@ -7,6 +7,7 @@ let localIps = [];
 let currentSessionId = -1;
 let sessionsData = new Map();
 let msgHistory = new Map();
+let pendingMsgs = new Map();
 let pendingFilesTransfers = new Map();
 let avatarTimestamps = new Map([
     ["self", Date.now()]
@@ -80,6 +81,7 @@ document.getElementById("delete_conversation").onclick = function() {
 document.getElementById("add_contact").onclick = function() {
     socket.send("contact "+currentSessionId);
     sessionsData.get(currentSessionId).isContact = true;
+    pendingMsgs.set(currentSessionId, []);
     displayHeader();
     displaySessions();
 };
@@ -103,7 +105,9 @@ document.getElementById("remove_contact").onclick = function() {
         if (!session.isOnline) {
             sessionsData.delete(currentSessionId);
             msgHistory.get(currentSessionId).length = 0;
+            displayChatBottom();
         }
+        pendingMsgs.delete(currentSessionId);
         displayHeader();
         displaySessions();
         displayHistory();
@@ -215,7 +219,11 @@ document.getElementById("attach_file").onchange = function(event) {
             formData.append("", files[i]);
             fetch("/send_file", {method: "POST", body: formData}).then(response => {
                 if (response.ok) {
-                    response.text().then(uuid => onFileSent(currentSessionId, new Date(), uuid, files[i].name));
+                    response.text().then(text => {
+                        if (text === "pending") {
+                            newPendingMsg(currentSessionId, true, files[i].name);
+                        }
+                    });
                 } else {
                     console.log(response);
                 }
@@ -226,16 +234,19 @@ document.getElementById("attach_file").onchange = function(event) {
 document.getElementById("file_cancel").onclick = function() {
     socket.send("abort "+currentSessionId);
 };
-let msg_log = document.getElementById("msg_log");
-msg_log.onscroll = function() {
-    if (sessionsData.get(currentSessionId).isContact) {
-        if (msg_log.scrollTop < 30) {
-            socket.send("load_msgs "+currentSessionId);
+let msgLog = document.getElementById("msg_log");
+msgLog.onscroll = function() {
+    let session = sessionsData.get(currentSessionId);
+    if (typeof sessions !== "undefined") {
+        if (session.isContact) {
+            if (msgLog.scrollTop < 30) {
+                socket.send("load_msgs "+currentSessionId);
+            }
         }
     }
 };
-let profile_div = document.querySelector("#me>div");
-profile_div.onclick = function() {
+let profileDiv = document.querySelector("#me>div");
+profileDiv.onclick = function() {
     let mainDiv = document.createElement("div");
     mainDiv.id = "profile_info";
     let avatarContainer = document.createElement("div");
@@ -480,7 +491,7 @@ socket.onmessage = function(msg) {
                 onNewMessage(args[1], args[2] === "true", parseTimestamp(args[3]), msg.data.slice(args[0].length+args[1].length+args[2].length+args[3].length+4));
                 break;
             case "file":
-                onFileReceived(args[1], parseTimestamp(args[2]), args[3], msg.data.slice(args[0].length+args[1].length+args[2].length+args[3].length+4));
+                onNewFile(args[1], args[2] === "true", parseTimestamp(args[3]), args[4], msg.data.slice(args[0].length+args[1].length+args[2].length+args[3].length+args[4].length+5));
                 break;
             case "files_transfer":
                 onNewFilesTransfer(args[1], args[2], msg.data.slice(args[0].length+args[1].length+args[2].length+3));
@@ -508,6 +519,15 @@ socket.onmessage = function(msg) {
                 break;
             case "not_seen":
                 setNotSeen(msg.data.slice(args[0].length+1));
+                break;
+            case "pending":
+                newPendingMsg(args[1], args[2] === "true", msg.data.slice(args[0].length+args[1].length+args[2].length+3));
+                break;
+            case "sending_pending_msgs":
+                onSendingPendingMsgs(args[1]);
+                break;
+            case "pending_msgs_sent":
+                onPendingMsgsSent(args[1]);
                 break;
             case "local_ips":
                 setLocalIps(msg.data.slice(args[0].length+1));
@@ -579,6 +599,22 @@ function setNotSeen(strSessionIds) {
     }
     displaySessions();
 }
+function newPendingMsg(sessionId, isFile, data) {
+    pendingMsgs.get(sessionId).push([isFile, data]);
+    if (sessionId == currentSessionId) {
+        displayHistory();
+    }
+}
+function onSendingPendingMsgs(sessionId) {
+    document.getElementById("pending_msgs_indicator").classList.add("sending");
+    pendingMsgs.get(sessionId).length = 0;
+    if (sessionId == currentSessionId) {
+        displayHistory();
+    }
+}
+function onPendingMsgsSent(sessionId) {
+    document.getElementById("pending_msgs_indicator").classList.remove("sending");
+}
 function setLocalIps(strIPs) {
     localIps = strIPs.split(' ');
 }
@@ -591,6 +627,7 @@ function onIsContact(sessionId, verified, fingerprint, name) {
     } else {
         addSession(sessionId, name, undefined, fingerprint, undefined, true, verified, false);
     }
+    pendingMsgs.set(sessionId, []);
 }
 function onMsgOrFileReceived(sessionId, outgoing, body) {
     if (currentSessionId == sessionId) {
@@ -615,6 +652,10 @@ function onMsgOrFileReceived(sessionId, outgoing, body) {
 function onNewMessage(sessionId, outgoing, timestamp, msg) {
     msgHistory.get(sessionId).push([outgoing, timestamp, false, msg]);
     onMsgOrFileReceived(sessionId, outgoing, msg);
+}
+function onNewFile(sessionId, outgoing, timestamp, uuid, filename) {
+    msgHistory.get(sessionId).push([outgoing, timestamp, true, [uuid, filename]]);
+    onMsgOrFileReceived(sessionId, outgoing, filename);
 }
 function onNewFilesTransfer(sessionId, index, filesInfo) {
     let split = filesInfo.split(' ');
@@ -763,12 +804,12 @@ function onMsgsLoad(sessionId, strMsgs) {
             }
         }
         if (currentSessionId == sessionId) {
-            if (msg_log.scrollHeight - msg_log.scrollTop === msg_log.clientHeight) {
+            if (msgLog.scrollHeight - msgLog.scrollTop === msgLog.clientHeight) {
                 displayHistory();
             } else {
-                let backupHeight = msg_log.scrollHeight;
+                let backupHeight = msgLog.scrollHeight;
                 displayHistory(false);
-                msg_log.scrollTop = msg_log.scrollHeight-backupHeight;
+                msgLog.scrollTop = msgLog.scrollHeight-backupHeight;
             }
         }
     }
@@ -783,22 +824,13 @@ function onDisconnected(sessionId) {
     }
     if (currentSessionId == sessionId) {
         displayChatBottom();
+        scrollHistoryToBottom();
     }
     if (currentSessionId == sessionId && !session.isContact) {
         currentSessionId = -1;
         chatHeader.classList.add("offline");
     }
     displaySessions();
-}
-function onFileReceived(sessionId, timestamp, uuid, file_name) {
-    msgHistory.get(sessionId).push([false, timestamp, true, [uuid, file_name]]);
-    onMsgOrFileReceived(sessionId, false, file_name);
-}
-function onFileSent(sessionId, timestamp, uuid, file_name) {
-    msgHistory.get(sessionId).push([true, timestamp, true, [uuid, file_name]]);
-    if (currentSessionId == sessionId) {
-        displayHistory();
-    }
 }
 function onNameSet(newName) {
     removePopup();
@@ -946,11 +978,11 @@ function logout() {
     window.location = "/logout";
 }
 function displayProfile() {
-    profile_div.innerHTML = "";
-    profile_div.appendChild(generateSelfAvatar(avatarTimestamps.get("self")));
+    profileDiv.innerHTML = "";
+    profileDiv.appendChild(generateSelfAvatar(avatarTimestamps.get("self")));
     let p = document.createElement("p");
     p.textContent = identityName;
-    profile_div.appendChild(p);
+    profileDiv.appendChild(p);
 }
 function displayHeader() {
     chatHeader.children[0].innerHTML = "";
@@ -1066,7 +1098,7 @@ function generateMessage(name, sessionId, msg) {
     divContainer.appendChild(div);
     return divContainer;
 }
-function generateFile(name, sessionId, outgoing, file_info) {
+function generateFile(name, sessionId, outgoing, fileInfo) {
     let div1 = document.createElement("div");
     div1.classList.add("file");
     div1.classList.add("content");
@@ -1078,14 +1110,18 @@ function generateFile(name, sessionId, outgoing, file_info) {
         h4.textContent = "File received:";
     }
     div2.appendChild(h4);
-    let p = document.createElement("p");
-    p.textContent = file_info[1];
-    div2.appendChild(p);
     div1.appendChild(div2);
-    let a = document.createElement("a");
-    a.href = "/load_file?uuid="+file_info[0]+"&file_name="+encodeURIComponent(file_info[1]);
-    a.target = "_blank";
-    div1.appendChild(a);
+    let p = document.createElement("p");
+    if (typeof fileInfo === "string") { //pending
+        p.textContent = fileInfo;
+    } else {
+        p.textContent = fileInfo[1];
+        let a = document.createElement("a");
+        a.href = "/load_file?uuid="+fileInfo[0]+"&file_name="+encodeURIComponent(fileInfo[1]);
+        a.target = "_blank";
+        div1.appendChild(a);
+    }
+    div2.appendChild(p);
     let divContainer = document.createElement("div");
     if (typeof name !== "undefined") {
         divContainer.appendChild(generateMsgHeader(name, sessionId));
@@ -1104,13 +1140,16 @@ function displayChatBottom(speed = undefined) {
     let fileTransfer = document.getElementById("file_transfer");
     let session = sessionsData.get(currentSessionId);
     if (typeof session === "undefined") {
-        msgBox.removeAttribute("style");
+        msgBox.classList.remove("active");
         fileTransfer.classList.remove("active");
     } else {
+        if (session.isContact || session.isOnline) {
+            msgBox.classList.add("active");
+        }
         if (session.isOnline) {
-            msgBox.style.display = "flex";
+            msgBox.classList.add("online");
         } else {
-            msgBox.removeAttribute("style");
+            msgBox.classList.remove("online");
         }
         if (pendingFilesTransfers.has(currentSessionId)) {
             let fileInfo = document.getElementById("file_info");
@@ -1155,13 +1194,16 @@ function displayChatBottom(speed = undefined) {
         }
     }
 }
+function scrollHistoryToBottom() {
+    msgLog.scrollTop = msgLog.scrollHeight;
+}
 function displayHistory(scrollToBottom = true) {
-    msg_log.innerHTML = "";
+    msgLog.innerHTML = "";
     let session = sessionsData.get(currentSessionId);
     if (typeof session === "undefined") {
-        msg_log.style.display = "none";
+        msgLog.style.display = "none";
     } else {
-        msg_log.style.display = "block";
+        msgLog.style.display = "block";
         let previousOutgoing = undefined;
         msgHistory.get(currentSessionId).forEach(entry => {
             let name = undefined;
@@ -1184,12 +1226,39 @@ function displayHistory(scrollToBottom = true) {
             let li = document.createElement("li");
             li.appendChild(div);
             li.appendChild(generateMessageTimestamp(entry[1]));
-            msg_log.appendChild(li);
+            msgLog.appendChild(li);
         });
-        if (scrollToBottom) {
-            msg_log.scrollTop = msg_log.scrollHeight;
+        if (session.isContact) {
+            let msgs = pendingMsgs.get(currentSessionId);
+            if (msgs.length > 0) {
+                let li = document.createElement("li");
+                li.classList.add("pending_msgs_divider");
+                let h4 = document.createElement("h4");
+                h4.textContent = "Pending messages:";
+                li.appendChild(h4);
+                msgLog.appendChild(li);
+                msgs.forEach(entry => {
+                    let name = undefined;
+                    if (previousOutgoing != true) {
+                        previousOutgoing = true;
+                        name = identityName;
+                    }
+                    let div;
+                    if (entry[0]) { //is file
+                        div = generateFile(name, currentSessionId, true, entry[1]);
+                    } else {
+                        div = generateMessage(name, currentSessionId, entry[1]);
+                    }
+                    let li = document.createElement("li");
+                    li.appendChild(div);
+                    msgLog.appendChild(li);
+                });
+            }
         }
-        if (msg_log.scrollHeight <= msg_log.clientHeight && session.isContact) {
+        if (scrollToBottom) {
+            scrollHistoryToBottom();
+        }
+        if (msgLog.scrollHeight <= msgLog.clientHeight && session.isContact) {
             socket.send("load_msgs "+currentSessionId);
         }
     }
