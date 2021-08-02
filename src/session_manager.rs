@@ -438,6 +438,7 @@ impl SessionManager {
                                                 timestamp,
                                                 data: buffer,
                                             };
+                                            self.set_seen(session_id, false);
                                             self.with_ui_connection(|ui_connection| {
                                                 ui_connection.on_new_msg(&session_id, &msg);
                                             });
@@ -447,6 +448,7 @@ impl SessionManager {
                                             if let Some((filename, content)) = protocol::parse_file(&buffer) {
                                                 match self.store_file(&session_id, content) {
                                                     Ok(file_uuid) => {
+                                                        self.set_seen(session_id, false);
                                                         self.with_ui_connection(|ui_connection| {
                                                             ui_connection.on_new_file(&session_id, false, timestamp, filename, file_uuid);
                                                         });
@@ -468,9 +470,6 @@ impl SessionManager {
                                             })
                                         }
                                         _ => {}
-                                    }
-                                    if header == protocol::Headers::MESSAGE || header == protocol::Headers::FILE {
-                                        self.set_seen(session_id, false);
                                     }
                                 }
                             }
