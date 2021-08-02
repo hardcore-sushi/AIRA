@@ -237,7 +237,7 @@ document.getElementById("file_cancel").onclick = function() {
 let msgLog = document.getElementById("msg_log");
 msgLog.onscroll = function() {
     let session = sessionsData.get(currentSessionId);
-    if (typeof sessions !== "undefined") {
+    if (typeof session !== "undefined") {
         if (session.isContact) {
             if (msgLog.scrollTop < 30) {
                 socket.send("load_msgs "+currentSessionId);
@@ -1245,9 +1245,9 @@ function displayHistory(scrollToBottom = true) {
                     }
                     let div;
                     if (entry[0]) { //is file
-                        div = generateFile(name, currentSessionId, true, entry[1]);
+                        div = generateFile(name, undefined, true, entry[1]);
                     } else {
-                        div = generateMessage(name, currentSessionId, entry[1]);
+                        div = generateMessage(name, undefined, entry[1]);
                     }
                     let li = document.createElement("li");
                     li.appendChild(div);
