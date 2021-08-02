@@ -69,7 +69,6 @@ async fn start_websocket_server(global_vars: Arc<RwLock<GlobalVars>>) -> u16 {
 fn discover_peers(session_manager: Arc<SessionManager>) {
     tokio::spawn(async move {
         discovery::discover_peers(move |discovery_manager, ip| {
-            println!("New peer discovered: {}", ip);
             let session_manager = session_manager.clone();
             if session_manager.is_identity_loaded() {
                 tokio::spawn( async move {
@@ -153,6 +152,8 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                         ui_connection.write_message(tungstenite::Message::Pong(Vec::new())); //not sure if I'm doing this right
                     } else if msg.is_text() {
                         let msg = msg.into_text().unwrap();
+                        #[cfg(debug_assertions)]
+                        println!("Message: {}", msg);
                         let mut ui_connection = ui_connection.clone();
                         let session_manager = session_manager.clone();
                         handle.spawn(async move {
