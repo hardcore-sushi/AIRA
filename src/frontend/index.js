@@ -335,32 +335,35 @@ profileDiv.onclick = function() {
     changePasswordButton.textContent = "Change password";
     changePasswordButton.onclick = function() {
         let inputs = document.querySelectorAll("input[type=\"password\"]");
-        let newPassword, newPasswordConfirm;
+        let newPassword, newPasswordConfirm, oldPassword;
         if (isIdentityProtected) {
-            newPassword = inputs[1];
-            newPasswordConfirm = inputs[2];
+            oldPassword = inputs[0].value;
+            newPassword = inputs[1].value;
+            newPasswordConfirm = inputs[2].value;
         } else {
-            newPassword = inputs[0];
-            newPasswordConfirm = inputs[1];
+            newPassword = inputs[0].value;
+            newPasswordConfirm = inputs[1].value;
         }
-        if (newPassword.value == newPasswordConfirm.value) {
-            let newPassword_set = newPassword.value.length > 0;
-            if (isIdentityProtected || newPassword_set) { //don't change password if identity is not protected and new password is blank
+        if (newPassword == newPasswordConfirm) {
+            let newPasswordSet = newPassword.length > 0;
+            if (isIdentityProtected && oldPassword.length == 0) {
+                errorMsg.textContent = "Current password cannot be empty.";
+            } else if (isIdentityProtected || newPasswordSet) { //don't change password if identity is not protected and new password is blank
                 let msg = "change_password";
                 if (isIdentityProtected) {
                     msg += " "+b64EncodeUnicode(inputs[0].value);
                 }
-                if (newPassword_set) {
-                    msg += " "+b64EncodeUnicode(newPassword.value);
+                if (newPasswordSet) {
+                    msg += " "+b64EncodeUnicode(newPassword);
                 }
                 socket.send(msg);
             } else {
                 removePopup();
             }
         } else {
-            newPassword.value = "";
-            newPasswordConfirm.value = "";
-            errorMsg.textContent = "Passwords don't match";
+            newPassword = "";
+            newPasswordConfirm = "";
+            errorMsg.textContent = "Passwords don't match.";
         }
     };
     sectionPassword.appendChild(changePasswordButton);

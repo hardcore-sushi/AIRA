@@ -1,4 +1,4 @@
-use std::{convert::TryInto, time::{SystemTime, UNIX_EPOCH}, path::PathBuf};
+use std::{convert::TryInto, time::{SystemTime, UNIX_EPOCH}, path::Path};
 use uuid::Bytes;
 use crate::print_error;
 
@@ -24,7 +24,7 @@ pub fn get_unix_timestamp_sec() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
 }
 
-pub fn get_not_used_path(file_name: &str, parent_directory: &PathBuf) -> String {
+pub fn get_not_used_path(file_name: &str, parent_directory: &Path) -> String {
     let has_extension = file_name.matches('.').count() > 0;
     let mut path = parent_directory.join(&file_name);
     let mut n = 1;

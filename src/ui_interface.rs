@@ -1,4 +1,4 @@
-use std::{fmt::Display, iter::FromIterator, net::{IpAddr, TcpStream}, str::from_utf8};
+use std::{fmt::Display, net::{IpAddr, TcpStream}, str::from_utf8};
 use tungstenite::{WebSocket, protocol::Role, Message};
 use uuid::Uuid;
 use crate::{identity, print_error, protocol, session_manager::{LargeFileDownload, LargeFilesDownload}, utils::to_uuid_bytes};
@@ -11,7 +11,7 @@ pub struct UiConnection{
 impl UiConnection {
     pub fn new(websocket: WebSocket<TcpStream>) -> UiConnection {
         UiConnection {
-            websocket: websocket,
+            websocket,
             is_valid: true
         }
     }
@@ -26,14 +26,14 @@ impl UiConnection {
         self.write_message(format!("{} {}", command, session_id));
     }
     fn data_list<T: Display>(command: &str, data: Vec<T>) -> String {
-        command.to_string()+&String::from_iter(data.into_iter().map(|i| {
+        command.to_string()+&data.into_iter().map(|i| {
             format!(" {}", i)
-        }))
+        }).collect::<String>()
     }
 
-    pub fn on_ask_large_files(&mut self, session_id: &usize, files: &Vec<LargeFileDownload>, download_location: &str) {
+    pub fn on_ask_large_files(&mut self, session_id: &usize, files: &[LargeFileDownload], download_location: &str) {
         let mut s = format!("ask_large_files {} {}", session_id, base64::encode(download_location));
-        files.into_iter().for_each(|file| {
+        files.iter().for_each(|file| {
             s.push_str(&format!(
                 " {} {}",
                 base64::encode(&file.file_name),
@@ -100,9 +100,9 @@ impl UiConnection {
     pub fn set_as_contact(&mut self, session_id: usize, name: &str, verified: bool, fingerprint: &str) {
         self.write_message(format!("is_contact {} {} {} {}", session_id, verified, fingerprint, name));
     }
-    pub fn load_msgs(&mut self, session_id: &usize, msgs: &Vec<identity::Message>) {
+    pub fn load_msgs(&mut self, session_id: &usize, msgs: &[identity::Message]) {
         let mut s = format!("load_msgs {}", session_id);
-        msgs.into_iter().rev().for_each(|message| {
+        msgs.iter().rev().for_each(|message| {
             match message.data[0] {
                 protocol::Headers::MESSAGE => match from_utf8(&message.data[1..]) {
                     Ok(msg) => s.push_str(&format!(" m {} {} {}", message.outgoing, message.timestamp, base64::encode(msg))),

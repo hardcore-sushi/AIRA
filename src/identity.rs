@@ -94,8 +94,8 @@ impl Identity {
         };
         Ok(Contact {
             uuid: contact_uuid,
-            public_key: public_key,
-            name: name,
+            public_key,
+            name,
             avatar: avatar_uuid,
             verified: false,
             seen: true,
@@ -277,27 +277,23 @@ impl Identity {
                                 let encrypted_outgoing: Vec<u8> = row.get(0).unwrap();
                                 match crypto::decrypt_data(encrypted_outgoing.as_slice(), &self.master_key){
                                     Ok(outgoing) => {
-                                        match byte_to_bool(outgoing[0]) {
-                                            Ok(outgoing) => {
-                                                let encrypted_timestamp: Vec<u8> = row.get(1).unwrap();
-                                                match crypto::decrypt_data(&encrypted_timestamp, &self.master_key) {
-                                                    Ok(timestamp) => {
-                                                        let encrypted_data: Vec<u8> = row.get(2).unwrap();
-                                                        match crypto::decrypt_data(encrypted_data.as_slice(), &self.master_key) {
-                                                            Ok(data) => msgs.push(Message {
-                                                                outgoing,
-                                                                timestamp: u64::from_be_bytes(timestamp.try_into().unwrap()),
-                                                                data,
-                                                            }),
-                                                            Err(e) => print_error!(e)
-                                                        }
+                                        if let Ok(outgoing) = byte_to_bool(outgoing[0]) {
+                                            let encrypted_timestamp: Vec<u8> = row.get(1).unwrap();
+                                            match crypto::decrypt_data(&encrypted_timestamp, &self.master_key) {
+                                                Ok(timestamp) => {
+                                                    let encrypted_data: Vec<u8> = row.get(2).unwrap();
+                                                    match crypto::decrypt_data(encrypted_data.as_slice(), &self.master_key) {
+                                                        Ok(data) => msgs.push(Message {
+                                                            outgoing,
+                                                            timestamp: u64::from_be_bytes(timestamp.try_into().unwrap()),
+                                                            data,
+                                                        }),
+                                                        Err(e) => print_error!(e)
                                                     }
-                                                    Err(e) => print_error!(e)
                                                 }
+                                                Err(e) => print_error!(e)
                                             }
-                                            Err(_) => {}
                                         }
-                                        
                                     }
                                     Err(e) => print_error!(e)
                                 }
@@ -382,14 +378,8 @@ impl Identity {
     pub fn load_identity(password: Option<&[u8]>) -> Result<Identity, String> {
         match Identity::load_encrypted_identity() {
             Ok(encrypted_identity) => {
-                let master_key: [u8; crypto::MASTER_KEY_LEN] = if password.is_none() {
-                    if encrypted_identity.encrypted_master_key.len() == crypto::MASTER_KEY_LEN {
-                        encrypted_identity.encrypted_master_key.try_into().unwrap()
-                    } else {
-                        return Err(String::from(DATABASE_CORRUPED_ERROR))
-                    }
-                } else {
-                    match crypto::decrypt_master_key(&encrypted_identity.encrypted_master_key, password.unwrap(), &encrypted_identity.salt) {
+                let master_key: [u8; crypto::MASTER_KEY_LEN] = match password {
+                    Some(password) => match crypto::decrypt_master_key(&encrypted_identity.encrypted_master_key, password, &encrypted_identity.salt) {
                         Ok(master_key) => master_key,
                         Err(e) => return Err(
                             match e {
@@ -397,6 +387,11 @@ impl Identity {
                                 CryptoError::InvalidLength => String::from(DATABASE_CORRUPED_ERROR)
                             }
                         )
+                    }
+                    None => if encrypted_identity.encrypted_master_key.len() == crypto::MASTER_KEY_LEN {
+                        encrypted_identity.encrypted_master_key.try_into().unwrap()
+                    } else {
+                        return Err(String::from(DATABASE_CORRUPED_ERROR))
                     }
                 };
                 match crypto::decrypt_data(&encrypted_identity.encrypted_keypair, &master_key) {
@@ -443,13 +438,16 @@ impl Identity {
         let db = KeyValueTable::new(&get_database_path(), MAIN_TABLE)?;
         db.set(DBKeys::NAME, name.as_bytes())?;
         db.set(DBKeys::KEYPAIR, &encrypted_keypair)?;
-        let salt = if password.is_none() { //no password
-            db.set(DBKeys::MASTER_KEY, &master_key)?; //storing master_key in plaintext
-            [0; crypto::SALT_LEN]
-        } else {
-            let (salt, encrypted_master_key) = crypto::encrypt_master_key(master_key, password.unwrap());
-            db.set(DBKeys::MASTER_KEY, &encrypted_master_key)?;
-            salt
+        let salt = match password {
+            Some(password) => {
+                let (salt, encrypted_master_key) = crypto::encrypt_master_key(master_key, password);
+                db.set(DBKeys::MASTER_KEY, &encrypted_master_key)?;
+                salt
+            }
+            None => {
+                db.set(DBKeys::MASTER_KEY, &master_key)?; //storing master_key in plaintext
+                [0; crypto::SALT_LEN]
+            }
         };
         db.set(DBKeys::SALT, &salt)?;
         let encrypted_use_padding = crypto::encrypt_data(&[bool_to_byte(true)], &master_key).unwrap();
@@ -464,13 +462,16 @@ impl Identity {
 
     fn update_master_key(master_key: [u8; crypto::MASTER_KEY_LEN], new_password: Option<&[u8]>) -> Result<usize, rusqlite::Error> {
         let db = KeyValueTable::new(&get_database_path(), MAIN_TABLE)?;
-        let salt = if new_password.is_none() { //no password
-            db.update(DBKeys::MASTER_KEY, &master_key)?;
-            [0; crypto::SALT_LEN]
-        } else {
-            let (salt, encrypted_master_key) = crypto::encrypt_master_key(master_key, new_password.unwrap());
-            db.update(DBKeys::MASTER_KEY, &encrypted_master_key)?;
-            salt
+        let salt = match new_password {
+            Some(new_password) => {
+                let (salt, encrypted_master_key) = crypto::encrypt_master_key(master_key, new_password);
+                db.update(DBKeys::MASTER_KEY, &encrypted_master_key)?;
+                salt
+            }
+            None => {
+                db.update(DBKeys::MASTER_KEY, &master_key)?;
+                [0; crypto::SALT_LEN]
+            }
         };
         db.update(DBKeys::SALT, &salt)
     }
@@ -478,19 +479,18 @@ impl Identity {
     pub fn change_password(old_password: Option<&[u8]>, new_password: Option<&[u8]>) -> Result<bool, String> {
         match Identity::load_encrypted_identity() {
             Ok(encrypted_identity) => {
-                let master_key: [u8; crypto::MASTER_KEY_LEN] = if old_password.is_none() {
-                    if encrypted_identity.encrypted_master_key.len() == crypto::MASTER_KEY_LEN {
-                        encrypted_identity.encrypted_master_key.try_into().unwrap()
-                    } else {
-                        return Err(String::from(DATABASE_CORRUPED_ERROR))
-                    }
-                } else {
-                    match crypto::decrypt_master_key(&encrypted_identity.encrypted_master_key, old_password.unwrap(), &encrypted_identity.salt) {
+                let master_key: [u8; crypto::MASTER_KEY_LEN] = match old_password {
+                    Some(old_password) => match crypto::decrypt_master_key(&encrypted_identity.encrypted_master_key, old_password, &encrypted_identity.salt) {
                         Ok(master_key) => master_key,
                         Err(e) => return match e {
                             CryptoError::DecryptionFailed => Ok(false),
                             CryptoError::InvalidLength => Err(String::from(DATABASE_CORRUPED_ERROR))
                         }
+                    }
+                    None => if encrypted_identity.encrypted_master_key.len() == crypto::MASTER_KEY_LEN {
+                        encrypted_identity.encrypted_master_key.try_into().unwrap()
+                    } else {
+                        return Err(String::from(DATABASE_CORRUPED_ERROR))
                     }
                 };
                 match Identity::update_master_key(master_key, new_password) {

@@ -65,11 +65,10 @@ impl SessionManager {
 
     fn with_ui_connection<F>(&self, f: F) where F: FnOnce(&mut UiConnection) {
         let mut ui_connection_opt = self.ui_connection.lock().unwrap();
-        match ui_connection_opt.as_mut() {
-            Some(ui_connection) => if ui_connection.is_valid {
+        if let Some(ui_connection) = ui_connection_opt.as_mut() {
+            if ui_connection.is_valid {
                 f(ui_connection);
             }
-            None => {}
         }
     }
 
@@ -110,10 +109,7 @@ impl SessionManager {
 
     fn get_session_sender(&self, session_id: &usize) -> Option<Sender<SessionCommand>> {
         let sessions = self.sessions.read().unwrap();
-        match sessions.get(session_id) {
-            Some(session_data) => Some(session_data.sender.clone()),
-            None => None
-        }
+        sessions.get(session_id).map(|session_data| session_data.sender.clone())
     }
 
     pub async fn send_command(&self, session_id: &usize, session_command: SessionCommand) -> bool {
@@ -488,11 +484,9 @@ impl SessionManager {
                             //don't send msg if we already encrypted a file chunk (keep PSEC nonces synchronized)
                             if is_sending {
                                 msg_queue.push(buff);
-                            } else {
-                                if let Err(e) = self.send_msg(session_id, &mut session_write, buff, &mut is_sending, &mut file_ack_sender).await {
-                                    print_error!(e);
-                                    break;
-                                }
+                            } else if let Err(e) = self.send_msg(session_id, &mut session_write, buff, &mut is_sending, &mut file_ack_sender).await {
+                                print_error!(e);
+                                break;
                             }
                         }
                         SessionCommand::EncryptFileChunk { plain_text } => {
@@ -505,7 +499,7 @@ impl SessionManager {
                                     Ok(_) => {
                                         file_ack_sender = Some(ack_sender);
                                         //once the pre-encrypted chunk is sent, we can send the pending messages
-                                        while msg_queue.len() > 0 {
+                                        while !msg_queue.is_empty() {
                                             let msg = msg_queue.remove(0);
                                             if let Err(e) = self.send_msg(session_id, &mut session_write, msg, &mut is_sending, &mut file_ack_sender).await {
                                                 print_error!(e);
@@ -594,7 +588,7 @@ impl SessionManager {
                             outgoing,
                             peer_public_key,
                             ip,
-                            sender: sender,
+                            sender,
                             files_download: None,
                         };
                         let mut session_id = None;
@@ -675,16 +669,13 @@ impl SessionManager {
         }
 
         let mut loaded_contacts = self.loaded_contacts.write().unwrap();
-        match loaded_contacts.get_mut(&session_id) {
-            Some(contact) => {
-                if contact.seen != seen {
-                    match self.identity.read().unwrap().as_ref().unwrap().set_contact_seen(&contact.uuid, seen) {
-                        Ok(_) => contact.seen = seen,
-                        Err(e) => print_error!(e)
-                    }
+        if let Some(contact) = loaded_contacts.get_mut(&session_id) {
+            if contact.seen != seen {
+                match self.identity.read().unwrap().as_ref().unwrap().set_contact_seen(&contact.uuid, seen) {
+                    Ok(_) => contact.seen = seen,
+                    Err(e) => print_error!(e)
                 }
             }
-            None => {}
         }
     }
 
@@ -734,10 +725,10 @@ impl SessionManager {
     }
 
     pub fn store_file(&self, session_id: &usize, data: &[u8]) -> Result<Uuid, rusqlite::Error> {
-        self.identity.read().unwrap().as_ref().unwrap().store_file(match self.loaded_contacts.read().unwrap().get(session_id) {
-            Some(contact) => Some(contact.uuid),
-            None => None
-        }, data)
+        self.identity.read().unwrap().as_ref().unwrap().store_file(
+            self.loaded_contacts.read().unwrap().get(session_id).map(|contact| contact.uuid),
+            data
+        )
     }
 
     pub fn load_msgs(&self, session_id: &usize, count: usize) -> Option<Vec<Message>> {
@@ -824,21 +815,18 @@ impl SessionManager {
         }
         *identity_guard = identity;
         if identity_guard.is_some() { //login
-            match identity_guard.as_ref().unwrap().load_contacts() {
-                Some(contacts) => {
-                    let mut loaded_contacts = self.loaded_contacts.write().unwrap();
-                    let mut session_counter = self.session_counter.write().unwrap();
-                    let mut not_seen = self.not_seen.write().unwrap();
-                    contacts.into_iter().for_each(|contact| {
-                        if !contact.seen {
-                            not_seen.push(*session_counter);
-                        }
-                        loaded_contacts.insert(*session_counter, contact);
-                        self.pending_msgs.lock().unwrap().insert(*session_counter, Vec::new());
-                        *session_counter += 1;
-                    })
-                }
-                None => {}
+            if let Some(contacts) = identity_guard.as_ref().unwrap().load_contacts() {
+                let mut loaded_contacts = self.loaded_contacts.write().unwrap();
+                let mut session_counter = self.session_counter.write().unwrap();
+                let mut not_seen = self.not_seen.write().unwrap();
+                contacts.into_iter().for_each(|contact| {
+                    if !contact.seen {
+                        not_seen.push(*session_counter);
+                    }
+                    loaded_contacts.insert(*session_counter, contact);
+                    self.pending_msgs.lock().unwrap().insert(*session_counter, Vec::new());
+                    *session_counter += 1;
+                });
             }
         }
     }

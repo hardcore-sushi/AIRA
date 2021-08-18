@@ -8,7 +8,7 @@ mod ui_interface;
 mod constants;
 mod discovery;
 
-use std::{env, fs, io, net::SocketAddr, str::{FromStr, from_utf8}, sync::{Arc, RwLock}};
+use std::{env, fs, io, net::SocketAddr, str::{FromStr, from_utf8}, sync::{Arc, RwLock}, cmp::Ordering};
 use image::GenericImageView;
 use tokio::{net::TcpListener, runtime::Handle, sync::mpsc};
 use actix_web::{App, HttpMessage, HttpRequest, HttpResponse, HttpServer, http::{header, CookieBuilder}, web, web::Data};
@@ -25,8 +25,8 @@ use session_manager::{SessionManager, SessionCommand};
 use ui_interface::UiConnection;
 
 async fn start_websocket_server(global_vars: Arc<RwLock<GlobalVars>>) -> u16 {
-    let websocket_bind_addr = env::var("AIRA_WEBSOCKET_ADDR").unwrap_or("127.0.0.1".to_owned());
-    let websocket_port = env::var("AIRA_WEBSOCKET_PORT").unwrap_or("0".to_owned());
+    let websocket_bind_addr = env::var("AIRA_WEBSOCKET_ADDR").unwrap_or_else(|_| "127.0.0.1".to_owned());
+    let websocket_port = env::var("AIRA_WEBSOCKET_PORT").unwrap_or_else(|_| "0".to_owned());
     let server = TcpListener::bind(websocket_bind_addr+":"+&websocket_port).await.unwrap();
     let websocket_port = server.local_addr().unwrap().port();
     tokio::spawn(async move {
@@ -114,7 +114,7 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
         }
     }
     session_manager.get_saved_msgs().into_iter().for_each(|msgs| {
-        if msgs.1.len() > 0 {
+        if !msgs.1.is_empty() {
             ui_connection.load_msgs(&msgs.0, &msgs.1);
         }
     });
@@ -157,7 +157,7 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                         let mut ui_connection = ui_connection.clone();
                         let session_manager = session_manager.clone();
                         handle.spawn(async move {
-                            let args: Vec<&str> = msg.split(" ").collect();
+                            let args: Vec<&str> = msg.split_whitespace().collect();
                             match args[0] {
                                 "set_seen" => {
                                     let session_id: usize = args[1].parse().unwrap();
@@ -177,9 +177,11 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                     let msg_content = &msg[args[0].len()+args[1].len()+2..];
                                     let buffer = protocol::new_message(msg_content);
                                     #[allow(unused_must_use)] {
-                                        session_manager.send_or_add_to_pending(&session_id, buffer).await.map(|sent| if !sent {
-                                            ui_connection.new_pending_msg(&session_id, false, msg_content);
-                                        });
+                                        if let Ok(sent) = session_manager.send_or_add_to_pending(&session_id, buffer).await {
+                                            if !sent {
+                                                ui_connection.new_pending_msg(&session_id, false, msg_content);
+                                            }
+                                        }
                                     }
                                 }
                                 "large_files" => {
@@ -274,11 +276,11 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                         (None, Some(base64::decode(args[1]).unwrap()))
                                     };
                                     let result = Identity::change_password(old_password.as_deref(), new_password.as_deref());
-                                    if old_password.is_some() {
-                                        old_password.unwrap().zeroize();
+                                    if let Some(mut old_password) = old_password {
+                                        old_password.zeroize();
                                     }
-                                    let is_identity_protected = if new_password.is_some() {
-                                        new_password.unwrap().zeroize();
+                                    let is_identity_protected = if let Some(mut new_password) = new_password {
+                                        new_password.zeroize();
                                         true
                                     } else {
                                         false
@@ -337,12 +339,10 @@ async fn handle_set_avatar(req: HttpRequest, mut payload: Multipart) -> HttpResp
                         match image::load_from_memory_with_format(&buffer, format) {
                             Ok(image) => {
                                 let (width, height) = image.dimensions();
-                                let image = if width < height {
-                                    image.crop_imm(0, (height-width)/2, width, width)
-                                } else if width > height {
-                                    image.crop_imm((width-height)/2, 0, height, height)
-                                } else {
-                                    image
+                                let image = match width.cmp(&height) {
+                                    Ordering::Greater => image.crop_imm((width-height)/2, 0, height, height),
+                                    Ordering::Less => image.crop_imm(0, (height-width)/2, width, width),
+                                    Ordering::Equal => image,
                                 };
                                 let mut avatar = Vec::new();
                                 image.write_to(&mut avatar, format).unwrap();
@@ -385,7 +385,7 @@ fn reply_with_avatar(avatar: Option<Vec<u8>>, name: Option<&str>) -> HttpRespons
                 let svg = include_str!(concat!(env!("OUT_DIR"), "/text_avatar.svg"));
                 #[cfg(debug_assertions)]
                 let svg = replace_fields("src/frontend/imgs/text_avatar.svg");
-                HttpResponse::Ok().content_type("image/svg+xml").body(svg.replace("LETTER", &name.chars().nth(0).unwrap_or('?').to_string()))
+                HttpResponse::Ok().content_type("image/svg+xml").body(svg.replace("LETTER", &name.chars().next().unwrap_or('?').to_string()))
             }
             None => HttpResponse::InternalServerError().finish()
         }
@@ -393,7 +393,7 @@ fn reply_with_avatar(avatar: Option<Vec<u8>>, name: Option<&str>) -> HttpRespons
 }
 
 fn handle_avatar(req: HttpRequest) -> HttpResponse {
-    let splits: Vec<&str> = req.path()[1..].split("/").collect();
+    let splits: Vec<&str> = req.path()[1..].split('/').collect();
     if splits.len() == 2 {
         if splits[1] == "self" {
             return reply_with_avatar(Identity::get_identity_avatar().ok(), Identity::get_identity_name().ok().as_deref());
@@ -417,11 +417,8 @@ fn handle_load_file(req: HttpRequest, file_info: web::Query<FileInfo>) -> HttpRe
         match Uuid::from_str(&file_info.uuid) {
             Ok(uuid) => {
                 let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
-                match global_vars.read().unwrap().session_manager.identity.read().unwrap().as_ref().unwrap().load_file(uuid) {
-                    Some(buffer) => {
-                        return HttpResponse::Ok().header("Content-Disposition", format!("attachment; filename=\"{}\"", escape_double_quote(html_escape::decode_html_entities(&file_info.file_name).to_string()))).content_type("application/octet-stream").body(buffer);
-                    }
-                    None => {}
+                if let Some(buffer) = global_vars.read().unwrap().session_manager.identity.read().unwrap().as_ref().unwrap().load_file(uuid) {
+                    return HttpResponse::Ok().header("Content-Disposition", format!("attachment; filename=\"{}\"", escape_double_quote(html_escape::decode_html_entities(&file_info.file_name).to_string()))).content_type("application/octet-stream").body(buffer);
                 }
             }
             Err(e) => print_error!(e)
@@ -572,7 +569,7 @@ fn handle_login(req: HttpRequest, mut params: web::Form<LoginParams>) -> HttpRes
             let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
             on_identity_loaded(identity, global_vars)
         }
-        Err(e) => generate_login_response(Some(&e.to_string()))
+        Err(e) => generate_login_response(Some(&e))
     };
     params.password.zeroize();
     response
@@ -621,7 +618,7 @@ async fn handle_create(req: HttpRequest, mut params: web::Form<CreateParams>) ->
     let response = if params.password == params.password_confirm {
         match Identity::create_identidy(
             &params.name,
-            if params.password.len() == 0 { //no password
+            if params.password.is_empty() { //no password
                 None
             } else {
                 Some(params.password.as_bytes())
@@ -693,7 +690,7 @@ fn replace_fields(file_path: &str) -> String {
 }
 
 fn handle_static(req: HttpRequest) -> HttpResponse {
-    let splits: Vec<&str> = req.path()[1..].split("/").collect();
+    let splits: Vec<&str> = req.path()[1..].split('/').collect();
     if splits[0] == "static" {
         let mut response_builder = HttpResponse::Ok();
         match splits[1] {
@@ -717,7 +714,7 @@ fn handle_static(req: HttpRequest) -> HttpResponse {
                     } else {
                         "none"
                     };
-                    match match splits[3] {
+                    if let Some(body) = match splits[3] {
                         "verified" => Some(include_str!("frontend/imgs/icons/verified.svg")),
                         "add_contact" => Some(include_str!("frontend/imgs/icons/add_contact.svg")),
                         "remove_contact" => Some(include_str!("frontend/imgs/icons/remove_contact.svg")),
@@ -732,11 +729,8 @@ fn handle_static(req: HttpRequest) -> HttpResponse {
                         "profile" => Some(include_str!("frontend/imgs/icons/profile.svg")),
                         _ => None
                     } {
-                        Some(body) => {
-                            response_builder.content_type("image/svg+xml");
-                            return response_builder.body(body.replace("FILL_COLOR", color))
-                        }
-                        None => {}
+                        response_builder.content_type("image/svg+xml");
+                        return response_builder.body(body.replace("FILL_COLOR", color))
                     }
                 } else if splits.len() == 3 {
                     match splits[2] {
@@ -776,13 +770,12 @@ fn handle_static(req: HttpRequest) -> HttpResponse {
             }
             "libs" => {
                 if splits.len() == 3 {
-                    match match splits[2] {
+                    if let Some(body) = match splits[2] {
                         "linkify.min.js" => Some(include_str!("frontend/libs/linkify.min.js")),
                         "linkify-element.min.js" => Some(include_str!("frontend/libs/linkify-element.min.js")),
                         _ => None
                     } {
-                        Some(body) => return response_builder.content_type(JS_CONTENT_TYPE).body(body),
-                        None => {}
+                        return response_builder.content_type(JS_CONTENT_TYPE).body(body);
                     }
                 }
             }
@@ -794,7 +787,7 @@ fn handle_static(req: HttpRequest) -> HttpResponse {
 
 #[actix_web::main]
 async fn start_http_server(global_vars: Arc<RwLock<GlobalVars>>) -> io::Result<()> {
-    let http_addr = env::var("AIRA_HTTP_ADDR").unwrap_or("127.0.0.1".to_owned()).parse().expect("AIRA_HTTP_ADDR invalid");
+    let http_addr = env::var("AIRA_HTTP_ADDR").unwrap_or_else(|_| "127.0.0.1".to_owned()).parse().expect("AIRA_HTTP_ADDR invalid");
     let http_port = match env::var("AIRA_HTTP_PORT") {
         Ok(port) => port.parse().expect("AIRA_HTTP_PORT invalid"),
         Err(_) => constants::UI_PORT
