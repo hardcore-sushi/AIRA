@@ -10,7 +10,8 @@ mod discovery;
 
 use std::{env, fs, io, net::SocketAddr, str::{FromStr, from_utf8}, sync::{Arc, RwLock}, cmp::Ordering};
 use image::GenericImageView;
-use tokio::{net::TcpListener, runtime::Handle, sync::mpsc};
+use tokio::{net::TcpListener, runtime::Handle, sync::mpsc, task::JoinError};
+use tungstenite::Message;
 use actix_web::{App, HttpMessage, HttpRequest, HttpResponse, HttpServer, http::{header, CookieBuilder}, web, web::Data};
 use actix_multipart::Multipart;
 use futures::{StreamExt, TryStreamExt};
@@ -24,41 +25,36 @@ use identity::Identity;
 use session_manager::{SessionManager, SessionCommand};
 use ui_interface::UiConnection;
 
-async fn start_websocket_server(global_vars: Arc<RwLock<GlobalVars>>) -> u16 {
+async fn start_websocket_server(ui_auth_token: Arc<RwLock<Option<String>>>, session_manager: Arc<SessionManager>) -> u16 {
     let websocket_bind_addr = env::var("AIRA_WEBSOCKET_ADDR").unwrap_or_else(|_| "127.0.0.1".to_owned());
     let websocket_port = env::var("AIRA_WEBSOCKET_PORT").unwrap_or_else(|_| "0".to_owned());
     let server = TcpListener::bind(websocket_bind_addr+":"+&websocket_port).await.unwrap();
     let websocket_port = server.local_addr().unwrap().port();
     tokio::spawn(async move {
-        let worker_done = Arc::new(RwLock::new(true));
         loop {
             let (stream, _addr) = server.accept().await.unwrap();
-            if *worker_done.read().unwrap() {
-                let ui_auth_token = {
-                    global_vars.clone().read().unwrap().ui_auth_token.clone()
-                };
-                if let Some(ui_auth_token) = ui_auth_token {
-                    let stream = stream.into_std().unwrap();
-                    stream.set_nonblocking(false).unwrap();
-                    match tungstenite::accept(stream.try_clone().unwrap()) {
-                        Ok(mut websocket) => {
-                            if let Ok(message) = websocket.read_message() { //waiting for auth token
-                                match message.into_text() {
-                                    Ok(token) => {
-                                        if token == ui_auth_token {
-                                            let ui_connection = UiConnection::new(websocket);
-                                            let global_vars = global_vars.clone();
-                                            global_vars.read().unwrap().session_manager.set_ui_connection(ui_connection.clone());
-                                            *worker_done.write().unwrap() = false;
-                                            websocket_worker(ui_connection, global_vars, worker_done.clone()).await;
-                                        }
+            let ui_auth_token = {
+                ui_auth_token.read().unwrap().clone()
+            };
+            if let Some(ui_auth_token) = ui_auth_token {
+                let stream = stream.into_std().unwrap();
+                stream.set_nonblocking(false).unwrap();
+                match tungstenite::accept(stream) {
+                    Ok(mut websocket) => {
+                        if let Ok(message) = websocket.read_message() { //waiting for auth token
+                            match message.into_text() {
+                                Ok(token) => {
+                                    if token == ui_auth_token {
+                                        let ui_connection = UiConnection::new(websocket);
+                                        session_manager.set_ui_connection(ui_connection.clone());
+                                        websocket_worker(ui_connection, session_manager.clone()).await.unwrap();
                                     }
-                                    Err(e) => print_error!(e)
                                 }
+                                Err(e) => print_error!(e)
                             }
                         }
-                        Err(e) => print_error!(e)
                     }
+                    Err(e) => print_error!(e)
                 }
             }
         }
@@ -83,19 +79,18 @@ fn discover_peers(session_manager: Arc<SessionManager>) {
     });
 }
 
-fn load_msgs(session_manager: Arc<SessionManager>, ui_connection: &mut UiConnection, session_id: &usize) {
+fn load_msgs(session_manager: &SessionManager, ui_connection: &mut UiConnection, session_id: &usize) {
     if let Some(msgs) = session_manager.load_msgs(session_id, constants::MSG_LOADING_COUNT) {
         ui_connection.load_msgs(session_id, &msgs);
     }
 }
 
-async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLock<GlobalVars>>, worker_done: Arc<RwLock<bool>>) {
-    let session_manager = global_vars.read().unwrap().session_manager.clone();
+async fn websocket_worker(mut ui_connection: UiConnection, session_manager: Arc<SessionManager>) -> Result<(), JoinError> {
     ui_connection.set_name(&session_manager.identity.read().unwrap().as_ref().unwrap().name);
     session_manager.list_contacts().into_iter().for_each(|contact|{
         ui_connection.set_as_contact(contact.0, &contact.1, contact.2, &crypto::generate_fingerprint(&contact.3));
         session_manager.last_loaded_msg_offsets.write().unwrap().insert(contact.0, 0);
-        load_msgs(session_manager.clone(), &mut ui_connection, &contact.0);
+        load_msgs(&session_manager, &mut ui_connection, &contact.0);
     });
     session_manager.sessions.read().unwrap().iter().for_each(|session| {
         ui_connection.on_new_session(
@@ -110,7 +105,7 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
     {
         let not_seen = session_manager.not_seen.read().unwrap();
         if not_seen.len() > 0 {
-            ui_connection.set_not_seen(not_seen.clone());
+            ui_connection.set_not_seen(&not_seen);
         }
     }
     session_manager.get_saved_msgs().into_iter().for_each(|msgs| {
@@ -141,15 +136,15 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
         }
         Err(e) => print_error!(e)
     }
-    ui_connection.set_local_ips(ips);
+    ui_connection.set_local_ips(&ips);
     discover_peers(session_manager.clone());
     let handle = Handle::current();
-    std::thread::spawn(move || { //new thread needed to block on read_message() without blocking tokio tasks
+    tokio::task::spawn_blocking(move || {
         loop {
             match ui_connection.websocket.read_message() {
                 Ok(msg) => {
                     if msg.is_ping() {
-                        ui_connection.write_message(tungstenite::Message::Pong(Vec::new())); //not sure if I'm doing this right
+                        ui_connection.write_message(Message::Pong(Vec::new())); //not sure if I'm doing this right
                     } else if msg.is_text() {
                         let msg = msg.into_text().unwrap();
                         #[cfg(debug_assertions)]
@@ -212,7 +207,7 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                                 }
                                 "load_msgs" => {
                                     let session_id: usize = args[1].parse().unwrap();
-                                    load_msgs(session_manager.clone(), &mut ui_connection, &session_id);
+                                    load_msgs(&session_manager, &mut ui_connection, &session_id);
                                 }
                                 "contact" => {
                                     let session_id: usize = args[1].parse().unwrap();
@@ -304,7 +299,6 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                 Err(e) => {
                     match e {
                         tungstenite::Error::ConnectionClosed => {
-                            *worker_done.write().unwrap() = true;
                             break;
                         }
                         _ => print_error!(e)
@@ -312,13 +306,13 @@ async fn websocket_worker(mut ui_connection: UiConnection, global_vars: Arc<RwLo
                 }
             }
         }
-    });
+    }).await
 }
 
 fn is_authenticated(req: &HttpRequest) -> bool {
     if let Some(cookie) = req.cookie(constants::HTTP_COOKIE_NAME) {
-        let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
-        if let Some(token) = &global_vars.read().unwrap().ui_auth_token {
+        let global_vars = req.app_data::<Data<GlobalVars>>().unwrap();
+        if let Some(token) = global_vars.ui_auth_token.read().unwrap().as_ref() {
             return token == cookie.value();
         }
     }
@@ -400,8 +394,8 @@ fn handle_avatar(req: HttpRequest) -> HttpResponse {
         }
     } else if splits.len() == 3 && is_authenticated(&req) {
         if let Ok(session_id) = splits[1].parse() {
-            let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
-            return reply_with_avatar(global_vars.read().unwrap().session_manager.get_avatar(&session_id), Some(splits[2]));
+            let global_vars = req.app_data::<Data<GlobalVars>>().unwrap();
+            return reply_with_avatar(global_vars.session_manager.get_avatar(&session_id), Some(splits[2]));
         }
     }
     HttpResponse::BadRequest().finish()
@@ -416,8 +410,8 @@ fn handle_load_file(req: HttpRequest, file_info: web::Query<FileInfo>) -> HttpRe
     if is_authenticated(&req) {
         match Uuid::from_str(&file_info.uuid) {
             Ok(uuid) => {
-                let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
-                if let Some(buffer) = global_vars.read().unwrap().session_manager.identity.read().unwrap().as_ref().unwrap().load_file(uuid) {
+                let global_vars = req.app_data::<Data<GlobalVars>>().unwrap();
+                if let Some(buffer) = global_vars.session_manager.identity.read().unwrap().as_ref().unwrap().load_file(uuid) {
                     return HttpResponse::Ok().header("Content-Disposition", format!("attachment; filename=\"{}\"", escape_double_quote(html_escape::decode_html_entities(&file_info.file_name).to_string()))).content_type("application/octet-stream").body(buffer);
                 }
             }
@@ -440,14 +434,13 @@ async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpRespo
                 } else if session_id.is_some() {
                     let filename = content_disposition.get_filename().unwrap();
                     let session_id = session_id.unwrap();
-                    let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
-                    let global_vars_read = global_vars.read().unwrap();
+                    let global_vars = req.app_data::<Data<GlobalVars>>().unwrap();
                     if req.path() == "/send_file" {
                         let mut buffer = Vec::new();
                         while let Some(Ok(chunk)) = field.next().await {
                             buffer.extend(chunk);
                         }
-                        if let Ok(sent) = global_vars_read.session_manager.send_or_add_to_pending(&session_id, protocol::file(filename, &buffer)).await {
+                        if let Ok(sent) = global_vars.session_manager.send_or_add_to_pending(&session_id, protocol::file(filename, &buffer)).await {
                             return if sent {
                                 HttpResponse::Ok().finish()
                             } else {
@@ -476,7 +469,7 @@ async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpRespo
                                     break;
                                 }
                             }
-                            if !global_vars_read.session_manager.send_command(&session_id, SessionCommand::EncryptFileChunk{
+                            if !global_vars.session_manager.send_command(&session_id, SessionCommand::EncryptFileChunk{
                                 plain_text: chunk_buffer.clone()
                             }).await {
                                 return HttpResponse::InternalServerError().finish();
@@ -484,7 +477,7 @@ async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpRespo
                             if !match ack_receiver.recv().await {
                                 Some(should_continue) => {
                                     //send previous encrypted chunk even if transfert is aborted to keep PSEC nonces syncrhonized
-                                    if global_vars_read.session_manager.send_command(&session_id, SessionCommand::SendEncryptedFileChunk {
+                                    if global_vars.session_manager.send_command(&session_id, SessionCommand::SendEncryptedFileChunk {
                                         ack_sender: ack_sender.clone()
                                     }).await {
                                         should_continue
@@ -513,11 +506,10 @@ async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpRespo
 
 async fn handle_logout(req: HttpRequest) -> HttpResponse {
     if is_authenticated(&req) {
-        let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
-        let mut global_vars_write = global_vars.write().unwrap();
-        if global_vars_write.session_manager.is_identity_loaded() {
-            global_vars_write.ui_auth_token = None;
-            global_vars_write.session_manager.stop().await;
+        let global_vars = req.app_data::<Data<GlobalVars>>().unwrap();
+        if global_vars.session_manager.is_identity_loaded() {
+            *global_vars.ui_auth_token.write().unwrap() = None;
+            global_vars.session_manager.stop().await;
         }
         if Identity::is_protected().unwrap_or(true) {
             HttpResponse::Found().header(header::LOCATION, "/").finish()
@@ -529,13 +521,12 @@ async fn handle_logout(req: HttpRequest) -> HttpResponse {
     }
 }
 
-fn login(identity: Identity, global_vars: &Arc<RwLock<GlobalVars>>) -> HttpResponse {
-    let mut global_vars_write = global_vars.write().unwrap();
-    let session_manager = global_vars_write.session_manager.clone();
+fn login(identity: Identity, global_vars: &GlobalVars) -> HttpResponse {
+    let session_manager = global_vars.session_manager.clone();
     if !session_manager.is_identity_loaded() {
-        global_vars_write.session_manager.set_identity(Some(identity));
-        global_vars_write.tokio_handle.clone().spawn(async move {
-            if SessionManager::start_listener(session_manager.clone()).await.is_err() {
+        session_manager.set_identity(Some(identity));
+        global_vars.tokio_handle.spawn(async move {
+            if SessionManager::start_listener(session_manager).await.is_err() {
                 print_error!("You won't be able to receive incomming connections from other peers.");
             }
         });
@@ -543,7 +534,7 @@ fn login(identity: Identity, global_vars: &Arc<RwLock<GlobalVars>>) -> HttpRespo
     let mut raw_cookie = [0; 32];
     OsRng.fill_bytes(&mut raw_cookie);
     let cookie_value = base64::encode(raw_cookie);
-    global_vars_write.ui_auth_token = Some(cookie_value.clone());
+    *global_vars.ui_auth_token.write().unwrap() = Some(cookie_value.clone());
     let cookie = CookieBuilder::new(constants::HTTP_COOKIE_NAME, cookie_value).max_age(time::Duration::hours(4)).finish();
     HttpResponse::Found()
         .header(header::LOCATION, "/")
@@ -551,7 +542,7 @@ fn login(identity: Identity, global_vars: &Arc<RwLock<GlobalVars>>) -> HttpRespo
         .finish()
 }
 
-fn on_identity_loaded(identity: Identity, global_vars: &Arc<RwLock<GlobalVars>>) -> HttpResponse {
+fn on_identity_loaded(identity: Identity, global_vars: &Arc<GlobalVars>) -> HttpResponse {
     match Identity::clear_cache() {
         Ok(_) => {},
         Err(e) => print_error!(e)
@@ -566,7 +557,7 @@ struct LoginParams {
 fn handle_login(req: HttpRequest, mut params: web::Form<LoginParams>) -> HttpResponse {
     let response = match Identity::load_identity(Some(params.password.as_bytes())) {
         Ok(identity) => {
-            let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
+            let global_vars = req.app_data::<Data<GlobalVars>>().unwrap();
             on_identity_loaded(identity, global_vars)
         }
         Err(e) => generate_login_response(Some(&e))
@@ -625,8 +616,8 @@ async fn handle_create(req: HttpRequest, mut params: web::Form<CreateParams>) ->
             }
         ) {
             Ok(identity) => {
-                let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
-                login(identity, global_vars.get_ref())
+                let global_vars = req.app_data::<Data<GlobalVars>>().unwrap();
+                login(identity, global_vars)
             }
             Err(e) => {
                 print_error!(e);
@@ -641,7 +632,7 @@ async fn handle_create(req: HttpRequest, mut params: web::Form<CreateParams>) ->
     response
 }
 
-fn index_not_logged_in(global_vars: &Arc<RwLock<GlobalVars>>) -> HttpResponse {
+fn index_not_logged_in(global_vars: &Arc<GlobalVars>) -> HttpResponse {
     if Identity::is_protected().unwrap_or(true) {
         generate_login_response(None)
     } else {
@@ -653,22 +644,21 @@ fn index_not_logged_in(global_vars: &Arc<RwLock<GlobalVars>>) -> HttpResponse {
 }
 
 async fn handle_index(req: HttpRequest) -> HttpResponse {
-    let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
+    let global_vars = req.app_data::<Data<GlobalVars>>().unwrap();
     if is_authenticated(&req) {
-        let global_vars_read = global_vars.read().unwrap();
         #[cfg(debug_assertions)]
         let html = fs::read_to_string("src/frontend/index.html").unwrap()
             .replace("AIRA_VERSION", env!("CARGO_PKG_VERSION"));
         #[cfg(not(debug_assertions))]
         let html = include_str!(concat!(env!("OUT_DIR"), "/index.html"));
-        let public_key = global_vars_read.session_manager.identity.read().unwrap().as_ref().unwrap().get_public_key();
-        let use_padding = global_vars_read.session_manager.identity.read().unwrap().as_ref().unwrap().use_padding.to_string();
+        let identity = global_vars.session_manager.identity.read().unwrap();
+        let identity = identity.as_ref().unwrap();
         HttpResponse::Ok().body(
             html
-                .replace("IDENTITY_FINGERPRINT", &crypto::generate_fingerprint(&public_key))
-                .replace("WEBSOCKET_PORT", &global_vars_read.websocket_port.to_string())
+                .replace("IDENTITY_FINGERPRINT", &crypto::generate_fingerprint(&identity.get_public_key()))
+                .replace("WEBSOCKET_PORT", &global_vars.websocket_port.to_string())
                 .replace("IS_IDENTITY_PROTECTED", &Identity::is_protected().unwrap().to_string())
-                .replace("PSEC_PADDING", &use_padding)
+                .replace("PSEC_PADDING", &identity.use_padding.to_string())
         )
     } else {
         index_not_logged_in(global_vars)
@@ -786,16 +776,15 @@ fn handle_static(req: HttpRequest) -> HttpResponse {
 }
 
 #[actix_web::main]
-async fn start_http_server(global_vars: Arc<RwLock<GlobalVars>>) -> io::Result<()> {
+async fn start_http_server(global_vars: GlobalVars) -> io::Result<()> {
     let http_addr = env::var("AIRA_HTTP_ADDR").unwrap_or_else(|_| "127.0.0.1".to_owned()).parse().expect("AIRA_HTTP_ADDR invalid");
     let http_port = match env::var("AIRA_HTTP_PORT") {
         Ok(port) => port.parse().expect("AIRA_HTTP_PORT invalid"),
         Err(_) => constants::UI_PORT
     };
     let server = HttpServer::new(move || {
-        let global_vars_clone = global_vars.clone();
         App::new()
-            .data(global_vars_clone)
+            .data(global_vars.clone())
             .service(web::resource("/")
                 .route(web::get().to(handle_index))
                 .route(web::post().to(handle_create))
@@ -818,10 +807,11 @@ async fn start_http_server(global_vars: Arc<RwLock<GlobalVars>>) -> io::Result<(
     server.run().await
 }
 
+#[derive(Clone)]
 struct GlobalVars {
     session_manager: Arc<SessionManager>,
     websocket_port: u16,
-    ui_auth_token: Option<String>,
+    ui_auth_token: Arc<RwLock<Option<String>>>,
     tokio_handle: Handle,
 }
 
@@ -832,13 +822,13 @@ async fn main() {
             print_error!(e);
         }
     }
-    let global_vars = Arc::new(RwLock::new(GlobalVars {
-        session_manager: Arc::new(SessionManager::new()),
-        websocket_port: 0,
-        ui_auth_token: None,
+    let ui_auth_token = Arc::new(RwLock::new(None));
+    let session_manager = Arc::new(SessionManager::new());
+    let websocket_port = start_websocket_server(ui_auth_token.clone(), session_manager.clone()).await;
+    start_http_server(GlobalVars {
+        session_manager,
+        websocket_port,
+        ui_auth_token,
         tokio_handle: Handle::current(),
-    }));
-    let websocket_port = start_websocket_server(global_vars.clone()).await;
-    global_vars.write().unwrap().websocket_port = websocket_port;
-    start_http_server(global_vars).unwrap();
+    }).unwrap();
 }

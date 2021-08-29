@@ -25,8 +25,8 @@ impl UiConnection {
     fn simple_event(&mut self, command: &str, session_id: &usize) {
         self.write_message(format!("{} {}", command, session_id));
     }
-    fn data_list<T: Display>(command: &str, data: Vec<T>) -> String {
-        command.to_string()+&data.into_iter().map(|i| {
+    fn data_list<T: Display>(command: &str, data: &[T]) -> String {
+        command.to_string()+&data.iter().map(|i| {
             format!(" {}", i)
         }).collect::<String>()
     }
@@ -120,7 +120,7 @@ impl UiConnection {
         });
         self.write_message(s);
     }
-    pub fn set_not_seen(&mut self, session_ids: Vec<usize>) {
+    pub fn set_not_seen(&mut self, session_ids: &[usize]) {
         self.write_message(Self::data_list("not_seen", session_ids));
     }
     pub fn new_pending_msg(&mut self, session_id: &usize, is_file: bool, data: &str) {
@@ -132,7 +132,7 @@ impl UiConnection {
     pub fn on_pending_msgs_sent(&mut self, session_id: &usize) {
         self.simple_event("pending_msgs_sent", session_id);
     }
-    pub fn set_local_ips(&mut self, ips: Vec<IpAddr>) {
+    pub fn set_local_ips(&mut self, ips: &[IpAddr]) {
         self.write_message(Self::data_list("local_ips", ips));
     }
     pub fn set_name(&mut self, new_name: &str) {
