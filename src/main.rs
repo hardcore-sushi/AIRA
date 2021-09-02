@@ -514,7 +514,11 @@ async fn handle_logout(req: HttpRequest) -> HttpResponse {
         if Identity::is_protected().unwrap_or(true) {
             HttpResponse::Found().header(header::LOCATION, "/").finish()
         } else {
-            HttpResponse::Ok().body(include_str!("frontend/logout.html"))
+            #[cfg(debug_assertions)]
+            let html = fs::read_to_string("src/frontend/logout.html").unwrap();
+            #[cfg(not(debug_assertions))]
+            let html = include_str!("frontend/logout.html");
+            HttpResponse::Ok().body(html)
         }
     } else {
         HttpResponse::Unauthorized().finish()
@@ -705,6 +709,7 @@ fn handle_static(req: HttpRequest) -> HttpResponse {
                         "none"
                     };
                     if let Some(body) = match splits[3] {
+                        "logo" => Some(include_str!("frontend/imgs/icons/logo.svg")),
                         "verified" => Some(include_str!("frontend/imgs/icons/verified.svg")),
                         "add_contact" => Some(include_str!("frontend/imgs/icons/add_contact.svg")),
                         "remove_contact" => Some(include_str!("frontend/imgs/icons/remove_contact.svg")),
