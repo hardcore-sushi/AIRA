@@ -8,11 +8,11 @@ mod ui_interface;
 mod constants;
 mod discovery;
 
-use std::{env, fs, io, net::SocketAddr, str::{FromStr, from_utf8}, sync::{Arc, RwLock}, cmp::Ordering};
+use std::{env, fs, io::{self, Cursor}, net::SocketAddr, str::{FromStr, from_utf8}, sync::{Arc, RwLock}, cmp::Ordering};
 use image::GenericImageView;
 use tokio::{net::TcpListener, runtime::Handle, sync::mpsc, task::JoinError};
 use tungstenite::Message;
-use actix_web::{App, HttpMessage, HttpRequest, HttpResponse, HttpServer, http::{header, CookieBuilder}, web, web::Data};
+use actix_web::{App, HttpRequest, HttpResponse, HttpServer, http::header, cookie::CookieBuilder, web, web::Data};
 use actix_multipart::Multipart;
 use futures::{StreamExt, TryStreamExt};
 use rand::{RngCore, rngs::OsRng};
@@ -321,7 +321,7 @@ fn is_authenticated(req: &HttpRequest) -> bool {
 
 async fn handle_set_avatar(req: HttpRequest, mut payload: Multipart) -> HttpResponse {
     if let Ok(Some(mut field)) = payload.try_next().await {
-        let content_disposition = field.content_disposition().unwrap();
+        let content_disposition = field.content_disposition();
         if let Some(name) = content_disposition.get_name() {
             if name == "avatar" {
                 let mut buffer = Vec::new();
@@ -339,9 +339,9 @@ async fn handle_set_avatar(req: HttpRequest, mut payload: Multipart) -> HttpResp
                                     Ordering::Equal => image,
                                 };
                                 let mut avatar = Vec::new();
-                                image.write_to(&mut avatar, format).unwrap();
-                                let global_vars = req.app_data::<Data<Arc<RwLock<GlobalVars>>>>().unwrap();
-                                let session_manager = &global_vars.read().unwrap().session_manager;
+                                image.write_to(&mut Cursor::new(&mut avatar), format).unwrap();
+                                let global_vars = req.app_data::<Data<GlobalVars>>().unwrap();
+                                let session_manager = &global_vars.session_manager;
                                 let is_authenticated = is_authenticated(&req);
                                 let is_running = session_manager.is_identity_loaded();
                                 if is_authenticated || !is_running {
@@ -386,7 +386,7 @@ fn reply_with_avatar(avatar: Option<Vec<u8>>, name: Option<&str>) -> HttpRespons
     }
 }
 
-fn handle_avatar(req: HttpRequest) -> HttpResponse {
+async fn handle_avatar(req: HttpRequest) -> HttpResponse {
     let splits: Vec<&str> = req.path()[1..].split('/').collect();
     if splits.len() == 2 {
         if splits[1] == "self" {
@@ -406,13 +406,13 @@ struct FileInfo {
     uuid: String,
     file_name: String,
 }
-fn handle_load_file(req: HttpRequest, file_info: web::Query<FileInfo>) -> HttpResponse {
+async fn handle_load_file(req: HttpRequest, file_info: web::Query<FileInfo>) -> HttpResponse {
     if is_authenticated(&req) {
         match Uuid::from_str(&file_info.uuid) {
             Ok(uuid) => {
                 let global_vars = req.app_data::<Data<GlobalVars>>().unwrap();
                 if let Some(buffer) = global_vars.session_manager.identity.read().unwrap().as_ref().unwrap().load_file(uuid) {
-                    return HttpResponse::Ok().header("Content-Disposition", format!("attachment; filename=\"{}\"", escape_double_quote(html_escape::decode_html_entities(&file_info.file_name).to_string()))).content_type("application/octet-stream").body(buffer);
+                    return HttpResponse::Ok().append_header(("Content-Disposition", format!("attachment; filename=\"{}\"", escape_double_quote(html_escape::decode_html_entities(&file_info.file_name).to_string())))).content_type("application/octet-stream").body(buffer);
                 }
             }
             Err(e) => print_error!(e)
@@ -425,14 +425,14 @@ async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpRespo
     if is_authenticated(&req) {
         let mut session_id: Option<usize> = None;
         while let Ok(Some(mut field)) = payload.try_next().await {
-            let content_disposition = field.content_disposition().unwrap();
+            let content_disposition = field.content_disposition();
             if let Some(name) = content_disposition.get_name() {
                 if name == "session_id" {
                     if let Some(Ok(raw_id)) = field.next().await {
                         session_id = Some(from_utf8(&raw_id).unwrap().parse().unwrap());
                     }
                 } else if session_id.is_some() {
-                    let filename = content_disposition.get_filename().unwrap();
+                    let filename = content_disposition.get_filename().unwrap().to_owned();
                     let session_id = session_id.unwrap();
                     let global_vars = req.app_data::<Data<GlobalVars>>().unwrap();
                     if req.path() == "/send_file" {
@@ -440,7 +440,7 @@ async fn handle_send_file(req: HttpRequest, mut payload: Multipart) -> HttpRespo
                         while let Some(Ok(chunk)) = field.next().await {
                             buffer.extend(chunk);
                         }
-                        if let Ok(sent) = global_vars.session_manager.send_or_add_to_pending(&session_id, protocol::file(filename, &buffer)).await {
+                        if let Ok(sent) = global_vars.session_manager.send_or_add_to_pending(&session_id, protocol::file(&filename, &buffer)).await {
                             return if sent {
                                 HttpResponse::Ok().finish()
                             } else {
@@ -512,7 +512,7 @@ async fn handle_logout(req: HttpRequest) -> HttpResponse {
             global_vars.session_manager.stop().await;
         }
         if Identity::is_protected().unwrap_or(true) {
-            HttpResponse::Found().header(header::LOCATION, "/").finish()
+            HttpResponse::Found().append_header((header::LOCATION, "/")).finish()
         } else {
             #[cfg(debug_assertions)]
             let html = fs::read_to_string("src/frontend/logout.html").unwrap();
@@ -541,8 +541,8 @@ fn login(identity: Identity, global_vars: &GlobalVars) -> HttpResponse {
     *global_vars.ui_auth_token.write().unwrap() = Some(cookie_value.clone());
     let cookie = CookieBuilder::new(constants::HTTP_COOKIE_NAME, cookie_value).max_age(time::Duration::hours(4)).finish();
     HttpResponse::Found()
-        .header(header::LOCATION, "/")
-        .set_header(header::SET_COOKIE, cookie.to_string())
+        .append_header((header::LOCATION, "/"))
+        .insert_header((header::SET_COOKIE, cookie.to_string()))
         .finish()
 }
 
@@ -558,7 +558,7 @@ fn on_identity_loaded(identity: Identity, global_vars: &Arc<GlobalVars>) -> Http
 struct LoginParams {
     password: String,
 }
-fn handle_login(req: HttpRequest, mut params: web::Form<LoginParams>) -> HttpResponse {
+async fn handle_login(req: HttpRequest, mut params: web::Form<LoginParams>) -> HttpResponse {
     let response = match Identity::load_identity(Some(params.password.as_bytes())) {
         Ok(identity) => {
             let global_vars = req.app_data::<Data<GlobalVars>>().unwrap();
@@ -683,7 +683,7 @@ fn replace_fields(file_path: &str) -> String {
     content
 }
 
-fn handle_static(req: HttpRequest) -> HttpResponse {
+async fn handle_static(req: HttpRequest) -> HttpResponse {
     let splits: Vec<&str> = req.path()[1..].split('/').collect();
     if splits[0] == "static" {
         let mut response_builder = HttpResponse::Ok();
@@ -780,7 +780,6 @@ fn handle_static(req: HttpRequest) -> HttpResponse {
     HttpResponse::NotFound().finish()
 }
 
-#[actix_web::main]
 async fn start_http_server(global_vars: GlobalVars) -> io::Result<()> {
     let http_addr = env::var("AIRA_HTTP_ADDR").unwrap_or_else(|_| "127.0.0.1".to_owned()).parse().expect("AIRA_HTTP_ADDR invalid");
     let http_port = match env::var("AIRA_HTTP_PORT") {
@@ -789,7 +788,7 @@ async fn start_http_server(global_vars: GlobalVars) -> io::Result<()> {
     };
     let server = HttpServer::new(move || {
         App::new()
-            .data(global_vars.clone())
+            .app_data(Data::new(global_vars.clone()))
             .service(web::resource("/")
                 .route(web::get().to(handle_index))
                 .route(web::post().to(handle_create))
@@ -799,8 +798,8 @@ async fn start_http_server(global_vars: GlobalVars) -> io::Result<()> {
             .route("/send_large_file", web::post().to(handle_send_file))
             .route("/load_file", web::get().to(handle_load_file))
             .route("/set_avatar", web::post().to(handle_set_avatar))
-            .route("/avatar/*", web::get().to(handle_avatar))
-            .route("/static/.*", web::get().to(handle_static))
+            .route("/avatar/{_}*", web::get().to(handle_avatar))
+            .route("/static/{_}*", web::get().to(handle_static))
             .route("/logout", web::get().to(handle_logout))
         }
     ).bind(SocketAddr::new(http_addr, http_port))?;
@@ -835,5 +834,5 @@ async fn main() {
         websocket_port,
         ui_auth_token,
         tokio_handle: Handle::current(),
-    }).unwrap();
+    }).await.unwrap();
 }

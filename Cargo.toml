@@ -1,6 +1,6 @@
 [package]
 name = "aira"
-version = "0.0.3"
+version = "0.1.1"
 authors = ["Hardcore Sushi <hardcore.sushi@disroot.org>"]
 edition = "2018"
 exclude = ["src/frontend"]
@@ -12,31 +12,32 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "
 async-psec = { version = "0.4", features = ["split"] }
 lazy_static = "1.4"
 socket2 = "0.4"
-rusqlite = { version = "0.25.1", features = ["bundled"] }
+rusqlite = { version = "0.27", features = ["bundled"] }
 ed25519-dalek = "1" #for singatures
-sha2 = "0.9"
+sha2 = "0.10"
 aes-gcm = "0.9"
 aes-gcm-siv = "0.10" #database encryption
-hkdf = "0.11"
+hkdf = "0.12"
 hex = "0.4"
-actix-web = "3"
-actix-multipart = "0.3"
-time = "0.2" #needed for actix cookies
+actix-web = "4"
+env_logger = "0.9"
+actix-multipart = "0.4"
+time = "0.3" #needed for actix cookies
 futures = "0.3"
-tungstenite = "0.15" #websocket
-serde = "1.0" #serialization
+tungstenite = "0.17" #websocket
+serde = { version = "1.0", features = ["derive"] } #serialization
 html-escape = "0.2"
 sanitize-filename = "0.3"
 platform-dirs = "0.3"
-uuid = { version = "0.8", features = ["v4"] }
-webbrowser = "0.5"
+uuid = { version = "1.0", features = ["v4"] }
+webbrowser = "0.7"
 libmdns = "0.6" #mDNS advertiser
 multicast_dns = "0.5" #mDNS browser
-if-addrs = "0.6"
+if-addrs = "0.7"
 base64 = "0.13"
-scrypt = "0.7"
-zeroize = "1.2"
-image = "0.23"
+scrypt = "0.10"
+zeroize = "1.5"
+image = "0.24"
 yaml-rust = "0.4" #only in debug mode
 
 [build-dependencies]
